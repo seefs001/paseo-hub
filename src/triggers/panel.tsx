@@ -812,6 +812,18 @@ function TriggerForm({
                   />
                 </div>
               )}
+              {selectedDaemon === undefined ? null : (
+                <CheckboxField
+                  id="trigger-keep-workspace"
+                  label="Keep the workspace after the run"
+                  description="Hub archives the run's workspace in Paseo when the agent finishes. Keep it to read or continue the conversation in Paseo afterwards."
+                  checked={form.keepWorkspace === true}
+                  onChange={(checked) => {
+                    const { keepWorkspace: _keep, ...rest } = form;
+                    onChange(checked ? { ...rest, keepWorkspace: true } : rest);
+                  }}
+                />
+              )}
             </>
           )}
         </Card>

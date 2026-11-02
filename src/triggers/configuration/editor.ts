@@ -33,6 +33,8 @@ export interface TriggerFormValue {
   recurrence?: Recurrence;
   daemon: string;
   cwd: string;
+  /** Set when the run's workspace stays in Paseo after it finishes; absent archives it. */
+  keepWorkspace?: true;
   agent: string;
   mode: string;
   thinkingOptionId: string;
@@ -101,6 +103,7 @@ function toFormValue(
     recurrence: definition.recurrence ?? DEFAULT_RECURRENCE,
     daemon: trigger.run.target.daemon,
     cwd: trigger.run.target.cwd,
+    ...(trigger.run.auto_archive ? {} : { keepWorkspace: true as const }),
     agent: joinAgentId(agent.provider, agent.model),
     mode: agent.mode ?? "",
     thinkingOptionId: agent.thinkingOptionId ?? "",
@@ -167,6 +170,10 @@ export function patchTriggerYaml(yaml: string, value: TriggerFormValue): string 
 
   setIfChanged(document, ["run", "target", "daemon"], value.daemon);
   setIfChanged(document, ["run", "target", "cwd"], value.cwd);
+  if (value.keepWorkspace === true) setIfChanged(document, ["run", "auto_archive"], false);
+  else if (document.getIn(["run", "auto_archive"]) === false) {
+    document.deleteIn(["run", "auto_archive"]);
+  }
   const agent = splitAgentId(value.agent);
   setIfChanged(document, ["run", "agent", "provider"], agent.provider);
   setOptional(document, ["run", "agent", "model"], agent.model);
@@ -243,6 +250,7 @@ export function createTriggerYaml(value: TriggerFormValue): string {
         continuation: formContinuation(value),
         max_runtime: value.maxRuntime.trim(),
         idle_timeout: value.idleTimeout.trim(),
+        ...(value.keepWorkspace === true ? { auto_archive: false } : {}),
         ...(github === undefined ? {} : { github }),
         prompt: value.prompt,
       },
