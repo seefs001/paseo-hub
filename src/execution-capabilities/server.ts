@@ -39,11 +39,42 @@ interface ExecutionCapabilityOptions {
   /** Reads a file the agent named in an output tool's `files` argument. */
   readExecutionFile?(execution: AgentExecutionRecord, path: string): Promise<OutputFile>;
   now?: () => Date;
+  /** Set by the server itself; not an input. */
+  outputsInFlight?: OutputsInFlight;
+}
+
+/**
+ * The output calls still being delivered, per execution. Agents often send `reply` and
+ * `finish_execution` in one parallel batch; finishing waits for those replies, so a reply that
+ * is still uploading its files is not cut off when the execution ends.
+ */
+class OutputsInFlight {
+  private readonly calls = new Map<string, Set<Promise<unknown>>>();
+
+  async track<T>(executionId: string, call: () => Promise<T>): Promise<T> {
+    const pending = call();
+    const calls = this.calls.get(executionId) ?? new Set();
+    calls.add(pending);
+    this.calls.set(executionId, calls);
+    try {
+      return await pending;
+    } finally {
+      calls.delete(pending);
+      if (calls.size === 0) this.calls.delete(executionId);
+    }
+  }
+
+  async settled(executionId: string): Promise<void> {
+    const calls = this.calls.get(executionId);
+    if (calls !== undefined) await Promise.allSettled(calls);
+  }
 }
 
 export function createExecutionCapabilityServer(
   options: ExecutionCapabilityOptions,
 ): ExecutionCapabilityServer {
+  const outputsInFlight = new OutputsInFlight();
+  options = { ...options, outputsInFlight };
   return {
     async handleSession(request, sessionId) {
       const token = readBearerToken(request.headers.get("authorization") ?? undefined);
@@ -234,12 +265,18 @@ async function callExecutionTool(
       : jsonSchemaContract(tool.inputSchema);
   const validation = contract.validate(args);
   if (!validation.valid) return toolFailure(validation.message);
-  if (toolName === finishExecutionToolName)
-    return finishExecutionCall(options, execution, token, args, materializedOutputs);
+  if (toolName === finishExecutionToolName) {
+    await options.outputsInFlight?.settled(execution.id);
+    // A reply that was still running counted toward required outputs only once it finished.
+    const current = (await options.database.findAgentExecutionById(execution.id)) ?? execution;
+    return finishExecutionCall(options, current, token, args, materializedOutputs);
+  }
   const output = materializedOutputs.find((item) => item.capability.tool.name === toolName);
-  return output === undefined
-    ? toolFailure(`Tool ${toolName} not found`)
-    : executeOutputCall(options, execution, toolName, output, args);
+  if (output === undefined) return toolFailure(`Tool ${toolName} not found`);
+  const run = () => executeOutputCall(options, execution, toolName, output, args);
+  return options.outputsInFlight === undefined
+    ? run()
+    : options.outputsInFlight.track(execution.id, run);
 }
 
 async function finishExecutionCall(
