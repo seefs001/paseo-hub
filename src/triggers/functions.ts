@@ -5,6 +5,7 @@ import { respondOk, type Result } from "../contract/respond.js";
 import { respondWithFailure } from "../failures/index.js";
 import { getApplication } from "../server/runtime.js";
 import type { TriggerDashboard } from "./dashboard.js";
+import type { DiscordChannelSummary } from "../providers/discord/client.js";
 
 const scopeSchema = z.object({ organizationSlug: z.string().trim().min(1).max(100) });
 const saveSchema = scopeSchema.extend({
@@ -44,6 +45,34 @@ export const saveTrigger = createServerFn({ method: "POST" })
         validation: error instanceof Error ? error.message : "This trigger is invalid.",
         conflict: "A trigger with this name already exists.",
       });
+    }
+  });
+
+const discordChannelsSchema = scopeSchema.extend({
+  connectionSlug: z.string().trim().min(1).max(100),
+});
+
+export const discordChannels = createServerFn({ method: "GET" })
+  .validator(discordChannelsSchema)
+  .handler(async ({ data }): Promise<Result<DiscordChannelSummary[]>> => {
+    try {
+      const catalog = (await getApplication()).discordChannelCatalog;
+      if (catalog == null) throw new Error("discord channel catalog unavailable");
+      return respondOk(
+        await catalog.read(getRequest(), {
+          organizationSlug: data.organizationSlug,
+          connectionSlug: data.connectionSlug,
+        }),
+      );
+    } catch (error) {
+      return respondWithFailure(
+        error,
+        triggerContext("trigger.discord_channels", data.organizationSlug),
+        {
+          fallback:
+            "Hub couldn't load this Discord server's channels. Check the bot can see the server and retry.",
+        },
+      );
     }
   });
 

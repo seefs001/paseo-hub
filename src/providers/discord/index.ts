@@ -138,6 +138,9 @@ export function createDiscordRegistration(
         options.fetch === undefined ? {} : { fetch: options.fetch },
       ),
     },
+    ...(client.listChannels === undefined
+      ? {}
+      : { discordChannels: (guildId: string) => client.listChannels!(guildId) }),
   };
 }
 

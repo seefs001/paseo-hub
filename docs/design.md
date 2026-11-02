@@ -150,7 +150,7 @@ missing app component.
 | `Spinner`, `LoadingLine`, `PanelSkeleton`                               | Wait. Skeletons for pages, a spinner for one fact.                                  |
 | `SegmentedControl`                                                      | Pick one of a few modes, with radio semantics.                                      |
 | `TabNav`, `TabNavSkeleton`                                              | Navigate between sibling routes under one page.                                     |
-| `Combobox`                                                              | Pick one of many with search.                                                       |
+| `Combobox`, `MultiCombobox`                                             | Pick one, or several, of many with search.                                          |
 | `CopyField`, `CopyButton`, `CopyBlock`, `CodeBlock`                     | Show a value to copy, or a block of code.                                           |
 | `Disclosure`                                                            | Open and close a bordered section.                                                  |
 | `RowActions`                                                            | Put a record's actions behind one kebab.                                            |

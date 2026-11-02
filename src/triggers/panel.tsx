@@ -682,13 +682,23 @@ function TriggerForm({
                     options={connectionOptions}
                     placeholder="Select a connection"
                     empty="No connections found."
-                    onChange={(option) => update("connection", option.value)}
+                    onChange={(option) => {
+                      if (option.value === form.connection) return;
+                      // Channel IDs belong to one Discord server; another connection's are noise.
+                      const { channels: _channels, ...rest } = form;
+                      onChange({ ...rest, connection: option.value });
+                    }}
                   />
                 )}
               </FormField>
             )}
           </div>
-          <EventFields value={form} errors={errors} onChange={onChange} />
+          <EventFields
+            organizationSlug={snapshot.organization.slug}
+            value={form}
+            errors={errors}
+            onChange={onChange}
+          />
         </Card>
 
         {eventDefinition(form.event).origin === "hub" ? null : (

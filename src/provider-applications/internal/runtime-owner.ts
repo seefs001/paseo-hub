@@ -440,6 +440,18 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
                 },
               },
             ],
+      ...(provider === "discord"
+        ? {
+            discordChannels: (guildId: string) => {
+              const active = slot.active;
+              const list = active?.registration.discordChannels;
+              if (active === undefined || list === undefined) {
+                throw unavailable("discord_channels_unavailable");
+              }
+              return this.withLease(active, () => list(guildId));
+            },
+          }
+        : {}),
       ...(provider === "slack" || provider === "discord"
         ? {
             attachment: {

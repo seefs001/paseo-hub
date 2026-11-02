@@ -9,11 +9,19 @@ export interface DiscordGuildIdentity {
 
 export type DiscordGuildMembership = "present" | "absent" | "unknown";
 
+/** A channel a mention can arrive in, with the category it sits under in the server's sidebar. */
+export interface DiscordChannelSummary {
+  id: string;
+  name: string;
+  category: string | null;
+}
+
 export interface DiscordConnectionClient {
   authorizationUrl(state: string): string;
   verifyGuild(code: string): Promise<DiscordGuildIdentity | undefined>;
   leaveGuild(guildId: string): Promise<void>;
   guildMembership(guildId: string): Promise<DiscordGuildMembership>;
+  listChannels?(guildId: string): Promise<DiscordChannelSummary[]>;
 }
 
 const tokenSchema = z
@@ -23,6 +31,19 @@ const tokenSchema = z
   })
   .passthrough();
 const guildSchema = z.object({ id: DiscordSnowflakeSchema, name: z.string() }).passthrough();
+const channelSchema = z
+  .object({
+    id: DiscordSnowflakeSchema,
+    type: z.number().int(),
+    name: z.string().nullish(),
+    position: z.number().int().nullish(),
+    parent_id: DiscordSnowflakeSchema.nullish(),
+  })
+  .passthrough();
+
+const CATEGORY_CHANNEL = 4;
+/** Text, voice, announcement, stage, forum, and media channels: the ones members post in. */
+const MESSAGE_CHANNELS = new Set([0, 2, 5, 13, 15, 16]);
 
 export function createDiscordConnectionClient(input: {
   publicBaseUrl: string;
@@ -97,5 +118,38 @@ export function createDiscordConnectionClient(input: {
         return "unknown";
       }
     },
+    async listChannels(guildId) {
+      DiscordSnowflakeSchema.parse(guildId);
+      const response = await request(new URL(`/api/v10/guilds/${guildId}/channels`, baseUrl), {
+        headers: { authorization: `Bot ${input.botToken}` },
+      });
+      if (!response.ok) throw new Error(`discord channel list failed: ${response.status}`);
+      return sortedChannels(z.array(channelSchema).parse(await response.json()));
+    },
   };
+}
+
+/** The server's sidebar order: uncategorised channels first, then each category in turn. */
+function sortedChannels(channels: readonly z.infer<typeof channelSchema>[]) {
+  const categories = new Map(
+    channels
+      .filter((channel) => channel.type === CATEGORY_CHANNEL)
+      .map((channel) => [channel.id, channel]),
+  );
+  const categoryPosition = (id: string | null | undefined) =>
+    id == null ? -1 : (categories.get(id)?.position ?? Number.MAX_SAFE_INTEGER);
+  return channels
+    .filter((channel) => MESSAGE_CHANNELS.has(channel.type))
+    .toSorted(
+      (left, right) =>
+        categoryPosition(left.parent_id) - categoryPosition(right.parent_id) ||
+        (left.position ?? 0) - (right.position ?? 0) ||
+        left.id.localeCompare(right.id),
+    )
+    .map((channel) => ({
+      id: channel.id,
+      name: channel.name ?? channel.id,
+      category:
+        channel.parent_id == null ? null : (categories.get(channel.parent_id)?.name ?? null),
+    }));
 }

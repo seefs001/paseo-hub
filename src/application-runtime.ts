@@ -28,6 +28,7 @@ import { CompositionResources } from "./composition-resources.js";
 import { TriggerDashboard } from "./triggers/dashboard.js";
 import type { ProviderApplications } from "./provider-applications/index.js";
 import { DaemonProviderCatalog } from "./daemons/provider-catalog.js";
+import { DiscordChannelCatalog } from "./triggers/discord/channel-catalog.js";
 import { HomeDashboard } from "./home/dashboard.js";
 import type { ProviderConnectionRegistration } from "./providers/registration.js";
 
@@ -139,6 +140,7 @@ async function createOwnedApplicationRuntime(
         : new ProjectDashboard(options.database, options.auth),
     triggerDashboard: triggerDashboardFor(options, application.hub),
     daemonProviderCatalog: daemonProviderCatalogFor(options, application.hub),
+    discordChannelCatalog: discordChannelCatalogFor(options, registrations),
     homeDashboard: homeDashboardFor(options, connections),
     ...entitlementSurfaces(options),
     testTriggerRoutes: options.testTriggerRoutes ?? false,
@@ -375,6 +377,17 @@ function daemonProviderCatalogFor(
   return new DaemonProviderCatalog(options.database, options.auth, (daemonId) =>
     hub.connectionForDaemon(daemonId),
   );
+}
+
+function discordChannelCatalogFor(
+  options: ApplicationCompositionOptions,
+  registrations: readonly ProviderRegistration[],
+): DiscordChannelCatalog | null {
+  const list = registrations.find(
+    ({ discordChannels }) => discordChannels !== undefined,
+  )?.discordChannels;
+  if (options.database === null || options.auth === null || list === undefined) return null;
+  return new DiscordChannelCatalog(options.database, options.auth, list);
 }
 
 function providerApplicationsFor(

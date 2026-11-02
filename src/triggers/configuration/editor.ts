@@ -25,6 +25,11 @@ export interface TriggerFormValue {
   connection: string;
   allowedUsers: string;
   qualifiers: QualifierValues;
+  /**
+   * Discord channel IDs a mention must arrive in, or under as a thread. Absent means every
+   * channel; the form never writes an empty list, which would match nothing.
+   */
+  channels?: string[];
   recurrence?: Recurrence;
   daemon: string;
   cwd: string;
@@ -66,6 +71,13 @@ export function projectTriggerForm(yaml: string): TriggerFormProjection {
     return { status: "yaml_only", reason: "Agent choices can only be edited in YAML." };
   }
   const agent = trigger.run.agent;
+  if (event === DISCORD_MENTION && definition.filters?.channels?.length === 0) {
+    return {
+      status: "yaml_only",
+      reason:
+        "An empty channel list matches no Discord channel. Remove it or name channels in YAML.",
+    };
+  }
   return {
     status: "editable",
     value: toFormValue(trigger, event, definition, agent),
@@ -85,6 +97,7 @@ function toFormValue(
     connection: definition.connection ?? "",
     allowedUsers: definition.filters?.from_users?.join(", ") ?? "*",
     qualifiers: readQualifiers(event, definition.filters),
+    ...readChannels(event, definition.filters),
     recurrence: definition.recurrence ?? DEFAULT_RECURRENCE,
     daemon: trigger.run.target.daemon,
     cwd: trigger.run.target.cwd,
@@ -147,6 +160,9 @@ export function patchTriggerYaml(yaml: string, value: TriggerFormValue): string 
   );
   for (const key of ownedKeys) {
     setOptional(document, ["on", value.event, "filters", key], qualifiers[key]);
+  }
+  if (value.event === DISCORD_MENTION || previousEvent === DISCORD_MENTION) {
+    setOptional(document, ["on", value.event, "filters", "channels"], discordChannels(value));
   }
 
   setIfChanged(document, ["run", "target", "daemon"], value.daemon);
@@ -239,10 +255,24 @@ function formEventDefinition(value: TriggerFormValue): TriggerDocument["on"][str
   if (value.event === "schedule.tick")
     return { recurrence: value.recurrence ?? DEFAULT_RECURRENCE };
   if (eventDefinition(value.event).origin === "hub") return {};
+  const channels = discordChannels(value);
   return {
     connection: value.connection,
-    filters: { from_users: users(value.allowedUsers), ...authoredQualifiers(value) },
+    filters: {
+      from_users: users(value.allowedUsers),
+      ...authoredQualifiers(value),
+      ...(channels === undefined ? {} : { channels }),
+    },
   };
+}
+
+const DISCORD_MENTION = "discord.mention";
+
+/** The channels the form owns: Discord mentions only, and never an empty list. */
+function discordChannels(value: TriggerFormValue): string[] | undefined {
+  if (value.event !== DISCORD_MENTION) return undefined;
+  const channels = value.channels ?? [];
+  return channels.length === 0 ? undefined : channels;
 }
 
 function workingDirectoryErrors(value: TriggerFormValue): TriggerFieldErrors {
@@ -461,7 +491,14 @@ export function changeTriggerEvent(value: TriggerFormValue, event: EditorEvent):
       }
     }
   }
-  return { ...value, event, qualifiers, connection: sameProvider ? value.connection : "" };
+  const { channels, ...rest } = value;
+  return {
+    ...rest,
+    event,
+    qualifiers,
+    connection: sameProvider ? value.connection : "",
+    ...(sameProvider && event === DISCORD_MENTION && channels !== undefined ? { channels } : {}),
+  };
 }
 
 function readQualifiers(
@@ -474,6 +511,14 @@ function readQualifiers(
     if (value !== undefined) values[qualifier.key] = value;
   }
   return values;
+}
+
+function readChannels(
+  event: EditorEvent,
+  filters: TriggerDocument["on"][string]["filters"],
+): Pick<TriggerFormValue, "channels"> {
+  const channels = filters?.channels ?? [];
+  return event === DISCORD_MENTION && channels.length > 0 ? { channels: [...channels] } : {};
 }
 
 function authoredQualifiers(value: TriggerFormValue): QualifierValues {

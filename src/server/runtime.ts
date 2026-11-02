@@ -17,6 +17,7 @@ import type { PublicApi } from "../public-api/index.js";
 import type { UsageDashboard } from "../usage/dashboard.js";
 import type { ProviderApplications } from "../provider-applications/index.js";
 import type { DaemonProviderCatalog } from "../daemons/provider-catalog.js";
+import type { DiscordChannelCatalog } from "../triggers/discord/channel-catalog.js";
 import type { HomeDashboard } from "../home/dashboard.js";
 
 /**
@@ -71,6 +72,7 @@ export interface ApplicationRuntime {
   projectDashboard: ProjectDashboard | null;
   triggerDashboard?: TriggerDashboard | null;
   daemonProviderCatalog?: DaemonProviderCatalog | null;
+  discordChannelCatalog?: DiscordChannelCatalog | null;
   /** The organization landing: checklist facts and a recent-window overview. */
   homeDashboard?: HomeDashboard | null;
   /** Org-scoped, read-only limits and usage. Present whenever database + browser auth are; no

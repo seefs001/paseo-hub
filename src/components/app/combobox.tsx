@@ -143,23 +143,11 @@ export function Combobox<T extends ComboboxOption>({
                     data-value={option.value}
                     onSelect={() => choose(option)}
                   >
-                    <CheckIcon
-                      aria-hidden="true"
-                      className={cn(option.value === value ? "opacity-100" : "opacity-0")}
+                    <OptionRow
+                      option={option}
+                      checked={option.value === value}
+                      {...(renderOption === undefined ? {} : { renderOption })}
                     />
-                    {option.icon}
-                    {renderOption === undefined ? (
-                      <span className="grid min-w-0 gap-0.5">
-                        <span className="truncate">{option.label}</span>
-                        {option.detail === undefined ? null : (
-                          <span className="truncate text-xs text-muted-foreground">
-                            {option.detail}
-                          </span>
-                        )}
-                      </span>
-                    ) : (
-                      renderOption(option)
-                    )}
                   </CommandItem>
                 ))}
               </>
@@ -169,6 +157,156 @@ export function Combobox<T extends ComboboxOption>({
       </PopoverContent>
     </Popover>
   );
+}
+
+function OptionRow<T extends ComboboxOption>({
+  option,
+  checked,
+  renderOption,
+}: {
+  option: T;
+  checked: boolean;
+  renderOption?: (option: T) => ReactNode;
+}) {
+  return (
+    <>
+      <CheckIcon aria-hidden="true" className={cn(checked ? "opacity-100" : "opacity-0")} />
+      {option.icon}
+      {renderOption === undefined ? (
+        <span className="grid min-w-0 gap-0.5">
+          <span className="truncate">{option.label}</span>
+          {option.detail === undefined ? null : (
+            <span className="truncate text-xs text-muted-foreground">{option.detail}</span>
+          )}
+        </span>
+      ) : (
+        renderOption(option)
+      )}
+    </>
+  );
+}
+
+/**
+ * Pick several of many, with search: the channels a trigger listens in. Choosing an option toggles
+ * it and keeps the list open, so a reader ticking five channels opens it once.
+ *
+ * A chosen value that is no longer on offer stays in the list, marked unavailable, so it can be
+ * seen and unticked rather than lingering invisibly in the saved configuration.
+ */
+export function MultiCombobox({
+  id,
+  label,
+  values,
+  options,
+  onChange,
+  placeholder,
+  searchPlaceholder,
+  loading = false,
+  disabled = false,
+  empty,
+  "aria-invalid": invalid,
+  "aria-describedby": describedBy,
+}: {
+  id: string;
+  /** The accessible name, when no `FormField` label points at this control. */
+  label?: string;
+  values: readonly string[];
+  options: readonly ComboboxOption[];
+  onChange: (values: string[]) => void;
+  /** What the closed trigger says when nothing is chosen, e.g. "Every channel". */
+  placeholder: string;
+  searchPlaceholder?: string;
+  loading?: boolean;
+  disabled?: boolean;
+  empty: string;
+  "aria-invalid"?: boolean;
+  "aria-describedby"?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const listId = useId();
+  const chosen = new Set(values);
+  const missing: ComboboxOption[] = loading
+    ? []
+    : values
+        .filter((value) => comboboxSelection(options, value) === undefined)
+        .map((value) => ({ value, label: `${value} (unavailable)` }));
+  const toggle = (value: string) =>
+    onChange(chosen.has(value) ? values.filter((entry) => entry !== value) : [...values, value]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          id={id}
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          aria-controls={listId}
+          {...(label === undefined ? {} : { "aria-label": label })}
+          {...(invalid === undefined ? {} : { "aria-invalid": invalid })}
+          {...(describedBy === undefined ? {} : { "aria-describedby": describedBy })}
+          disabled={disabled}
+          className="w-full min-w-0 justify-between"
+        >
+          <span className={cn("truncate", values.length === 0 && "text-extra-muted-foreground")}>
+            {multiComboboxLabel(options, values, placeholder, loading)}
+          </span>
+          {loading ? (
+            <Spinner className="opacity-50" />
+          ) : (
+            <ChevronsUpDownIcon aria-hidden="true" className="size-4 shrink-0 opacity-50" />
+          )}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
+        <Command>
+          <CommandInput placeholder={searchPlaceholder ?? `${placeholder}…`} />
+          <CommandList id={listId}>
+            {loading ? (
+              <div className="flex justify-center py-6">
+                <LoadingLine>Loading…</LoadingLine>
+              </div>
+            ) : (
+              <>
+                <CommandEmpty>{empty}</CommandEmpty>
+                {[...missing, ...options].map((option) => (
+                  <CommandItem
+                    key={option.value}
+                    value={option.value}
+                    {...(option.keywords === undefined ? {} : { keywords: [...option.keywords] })}
+                    {...(option.disabled === undefined ? {} : { disabled: option.disabled })}
+                    data-value={option.value}
+                    data-checked={chosen.has(option.value)}
+                    onSelect={() => toggle(option.value)}
+                  >
+                    <OptionRow option={option} checked={chosen.has(option.value)} />
+                  </CommandItem>
+                ))}
+              </>
+            )}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** What a closed multi-select reads: the chosen labels in order, or the placeholder. */
+export function multiComboboxLabel(
+  options: readonly ComboboxOption[],
+  values: readonly string[],
+  placeholder: string,
+  loading = false,
+): string {
+  if (values.length === 0) return placeholder;
+  return values
+    .map((value) => {
+      const selected = comboboxSelection(options, value);
+      if (selected !== undefined) return selected.label;
+      return loading ? value : `${value} (unavailable)`;
+    })
+    .join(", ");
 }
 
 /** The option a stored value refers to, or `undefined` when it refers to nothing on offer. */

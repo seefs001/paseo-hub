@@ -9,6 +9,7 @@ import type {
   AttachmentResolver,
 } from "../attachments/capabilities.js";
 import type { SlackDeliveryStatus } from "../triggers/slack/source/index.js";
+import type { DiscordChannelSummary } from "./discord/client.js";
 
 export interface TriggerProviderResources {
   configurationStoreForProject: (projectId: string) => ProjectConfigurationStore;
@@ -78,4 +79,6 @@ export interface ProviderRegistration {
   requests: readonly ProviderRequestRegistration[];
   attachment?: ProviderAttachmentRegistration;
   slackDelivery?: { status(): SlackDeliveryStatus; retry(): Promise<void> };
+  /** Lists a connected Discord server's channels, for the trigger form's channel picker. */
+  discordChannels?: (guildId: string) => Promise<DiscordChannelSummary[]>;
 }
