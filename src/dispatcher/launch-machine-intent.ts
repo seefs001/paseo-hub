@@ -30,6 +30,8 @@ export interface LaunchMachineIntent {
   github?: CompiledGitHubAuthority;
   /** Authored workspace title, already rendered; absent means Hub's default workspace title. */
   title?: string;
+  /** Paseo workspace labels to assign once the agent's workspace exists. */
+  labels?: readonly string[];
   prompt: string;
   agent: TriggerAgentConfig;
   allowOutputs: readonly AllowedOutput[];
@@ -57,6 +59,7 @@ export function buildLaunchMachineIntent(input: {
   env?: Readonly<Record<string, string>>;
   github?: CompiledGitHubAuthority;
   title?: string;
+  labels?: readonly string[];
   prompt: string;
   agent: TriggerAgentConfig;
   allowOutputs: readonly AllowedOutput[];
@@ -80,6 +83,7 @@ export function buildLaunchMachineIntent(input: {
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.github === undefined ? {} : { github: input.github }),
     ...(input.title === undefined ? {} : { title: input.title }),
+    ...(input.labels === undefined ? {} : { labels: input.labels }),
     prompt: input.prompt,
     agent: input.agent,
     allowOutputs: input.allowOutputs,

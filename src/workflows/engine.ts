@@ -973,6 +973,7 @@ function buildStepIntent(
       ...(step.title === undefined
         ? {}
         : { title: renderExecutionTemplate(step.title, executionId) }),
+      ...(step.labels === undefined ? {} : { labels: step.labels }),
       prompt: step.prompt
         .map((block) =>
           renderExpressionTemplate(block.kind === "text" ? block.value : block.content, context),

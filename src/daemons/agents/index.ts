@@ -6,6 +6,11 @@ import {
 } from "../../hub/protocol.js";
 import type { DaemonCreateAgentOptions, DaemonAgentStreamEvent } from "../protocol.js";
 import { DaemonResponseLostError } from "../protocol.js";
+import {
+  WORKSPACE_LABEL_COLORS,
+  workspaceLabelKey,
+  type WorkspaceLabelColor,
+} from "@getpaseo/protocol/workspace-labels";
 
 const SnapshotSchema = z.object({
   id: z.string(),
@@ -139,7 +144,26 @@ export class DaemonAgents implements AgentConnection {
     const agent = SnapshotSchema.parse(response["agent"]);
     if (options.workspaceTitle !== undefined)
       await this.titleWorkspace(agent.workspaceId, options.workspaceTitle);
+    for (const label of options.workspaceLabels ?? [])
+      await this.labelWorkspace(agent.workspaceId, label);
     return agent;
+  }
+  /**
+   * Like the title, labels attach to a workspace that exists only once the agent does. A label
+   * the daemon does not know yet is created in a colour derived from its name, so every daemon
+   * and every run picks the same one; an existing label keeps the colour its owner chose.
+   */
+  private async labelWorkspace(workspaceId: string, name: string): Promise<void> {
+    try {
+      await this.request({
+        type: "workspace.label.assignment.set.request",
+        workspaceId,
+        label: { name, color: labelColor(name) },
+        assigned: true,
+      });
+    } catch (error) {
+      this.reportFailure(error, "daemon.workspace.label.assign");
+    }
   }
   /**
    * The daemon takes no workspace title on create and never auto-names a workspace whose agent
@@ -263,4 +287,12 @@ export class DaemonAgents implements AgentConnection {
       this.pending.delete(requestId);
     }
   }
+}
+
+function labelColor(name: string): WorkspaceLabelColor {
+  let hash = 0;
+  for (const character of workspaceLabelKey(name)) {
+    hash = (hash * 31 + character.codePointAt(0)!) >>> 0;
+  }
+  return WORKSPACE_LABEL_COLORS[hash % WORKSPACE_LABEL_COLORS.length]!;
 }

@@ -75,7 +75,7 @@ export function compileTriggerDocument(yaml: string): CompiledTriggerDocument {
             ? {}
             : { startup_timeout: authored.run.startup_timeout }),
           agent,
-          ...(authored.run.title === undefined ? {} : { title: authored.run.title }),
+          ...workspacePresentation(authored.run),
           prompt: [{ text: authored.run.prompt }],
           ...(authored.run.env === undefined ? {} : { env: authored.run.env }),
           ...(authored.run.github === undefined ? {} : { github: authored.run.github }),
@@ -186,4 +186,12 @@ export function serializeTriggerDocument(trigger: TriggerDocument): string {
 
 function internalEventName(name: string, index: number, named: number): string {
   return index === named ? name : `${name}-event-${String(index + 1)}`;
+}
+
+/** How the run's workspace reads in Paseo: its title and its labels, each when authored. */
+function workspacePresentation(run: Pick<TriggerDocument["run"], "title" | "labels">) {
+  return {
+    ...(run.title === undefined ? {} : { title: run.title }),
+    ...(run.labels === undefined ? {} : { labels: run.labels }),
+  };
 }

@@ -824,6 +824,20 @@ function TriggerForm({
                   }}
                 />
               )}
+              {selectedDaemon === undefined ? null : (
+                <FormField
+                  id="trigger-workspace-labels"
+                  label="Workspace labels"
+                  description="Comma-separated Paseo labels for each run's workspace, for example Hub, Discord. A new label takes a colour from its name; an existing one keeps its colour."
+                  kind="text"
+                  name="workspaceLabels"
+                  value={form.workspaceLabels ?? ""}
+                  onChange={(next) => {
+                    const { workspaceLabels: _labels, ...rest } = form;
+                    onChange(next === "" ? rest : { ...rest, workspaceLabels: next });
+                  }}
+                />
+              )}
             </>
           )}
         </Card>

@@ -12,6 +12,8 @@ export interface DaemonCreateAgentOptions {
   title?: string;
   /** Title for the workspace the daemon creates for the agent, set once the agent exists. */
   workspaceTitle?: string;
+  /** Paseo workspace labels assigned to that workspace once the agent exists. */
+  workspaceLabels?: readonly string[];
   background?: boolean;
   mode?: string;
   model?: string;

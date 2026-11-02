@@ -178,6 +178,7 @@ const StepSchema = z
     startup_timeout: z.string().min(1).optional(),
     agent: AuthoredAgentSelectionSchema,
     title: z.string().min(1).optional(),
+    labels: z.array(z.string().trim().min(1)).min(1).optional(),
     prompt: z.array(PromptBlockSchema).min(1),
     env: z.record(z.string().min(1), z.string()).optional(),
     github: AuthoredGitHubAuthoritySchema.optional(),
@@ -257,6 +258,8 @@ export interface CompiledStep {
   agent: CompiledAgentSelection;
   /** Execution template for the workspace title; absent means Hub's default workspace title. */
   title?: string | undefined;
+  /** Paseo workspace labels assigned to the step's workspace once its agent exists. */
+  labels?: readonly string[] | undefined;
   prompt: readonly CompiledPromptBlock[];
   env?: Readonly<Record<string, string>> | undefined;
   github?: CompiledGitHubAuthority | undefined;
@@ -409,6 +412,7 @@ const CompiledStepSchema: z.ZodType<CompiledStep> = z
     startupTimeoutMs: z.number().int().positive().max(MAX_DURATION_MS).optional(),
     agent: CompiledAgentSelectionSchema,
     title: z.string().min(1).optional(),
+    labels: z.array(z.string().min(1)).min(1).optional(),
     prompt: z.array(CompiledPromptBlockSchema).min(1),
     env: z.record(z.string(), z.string()).optional(),
     github: CompiledGitHubAuthoritySchema.optional(),
@@ -621,6 +625,7 @@ function compileStep(
         }),
     agent,
     ...(step.title === undefined ? {} : { title: step.title }),
+    ...(step.labels === undefined ? {} : { labels: step.labels }),
     prompt: compilePromptBlocks(trigger.name, step.id, step.prompt, resolvedPromptPartials),
     ...(env === undefined ? {} : { env }),
     ...(github === undefined ? {} : { github }),

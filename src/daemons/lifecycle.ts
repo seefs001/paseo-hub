@@ -1952,6 +1952,7 @@ async function buildCreateAgentOptions(
     background: intent.background,
     title: EXECUTION_AGENT_TITLE,
     workspaceTitle: executionWorkspaceTitle(intent, hubExecutionEnv.executionId),
+    ...(intent.labels === undefined ? {} : { workspaceLabels: intent.labels }),
     ...(intent.agent.mode === undefined ? {} : { mode: intent.agent.mode }),
     ...(intent.agent.model === undefined ? {} : { model: intent.agent.model }),
     ...(intent.agent.thinkingOptionId === undefined
