@@ -1,10 +1,15 @@
 import type { AuthServer } from "../../auth/server.js";
 import { createHash } from "node:crypto";
 import type { Database } from "../../db/types.js";
-import { replyOutputTool, replyWithFilesOutputTool } from "../../execution-capabilities/outputs.js";
+import {
+  replyOutputTool,
+  replyWithFilesOutputTool,
+  type OutputToolDefinition,
+} from "../../execution-capabilities/outputs.js";
 import { logger } from "../../logger.js";
 import { reportFailure } from "../../failures/index.js";
 import { createDiscordRegistration } from "../../providers/discord/index.js";
+import { discordReplyOutputTool } from "../../triggers/discord/reply.js";
 import { createGitHubRegistration } from "../../providers/github/index.js";
 import { createLinearRegistration } from "../../providers/linear/index.js";
 import type {
@@ -401,10 +406,7 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
       outputs: [
         {
           type: `${provider}.reply`,
-          tool:
-            provider === "discord" || provider === "linear"
-              ? replyWithFilesOutputTool
-              : replyOutputTool,
+          tool: replyToolFor(provider),
           available: (context) => {
             const output = slot.active?.registration.outputs.find(
               (candidate) => candidate.type === `${provider}.reply`,
@@ -673,4 +675,10 @@ async function retire(provider: Provider, active: ActiveRegistration): Promise<v
       { logger, kind: "internal" },
     );
   }
+}
+
+function replyToolFor(provider: Provider): OutputToolDefinition {
+  if (provider === "discord") return discordReplyOutputTool;
+  if (provider === "linear") return replyWithFilesOutputTool;
+  return replyOutputTool;
 }

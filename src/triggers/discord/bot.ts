@@ -70,8 +70,12 @@ export interface DiscordPostInput {
 
 export interface DiscordConversationReplyInput extends DiscordPostInput {
   messageId: string;
+  /** Name for the thread this reply opens; ignored when the message already has a thread. */
+  threadTitle?: string;
   files?: readonly { name: string; bytes: Buffer }[];
 }
+
+export const DISCORD_THREAD_NAME_MAX_LENGTH = 100;
 
 export interface DiscordBotClient {
   start(): Promise<void>;
@@ -304,7 +308,9 @@ async function resolveReplyDestination(
     const message = await fetchMessage(client, channelId, messageId);
     const thread = message.hasThread
       ? await fetchSendableChannel(client, messageId)
-      : await message.startThread({ name: createThreadName(message.content) });
+      : await message.startThread({
+          name: threadName(input.threadTitle) ?? createThreadName(message.content),
+        });
     if (!isSendableChannel(thread)) throw new Error(`discord channel not sendable: ${thread.id}`);
     return thread;
   })();
@@ -359,6 +365,15 @@ function isSendableChannel(
   channel: GuildBasedChannel | TextBasedChannel,
 ): channel is DiscordSendableChannel {
   return "send" in channel && typeof Reflect.get(channel, "send") === "function";
+}
+
+function threadName(title: string | undefined): string | undefined {
+  const name = title
+    ?.replaceAll(/\s+/gu, " ")
+    .trim()
+    .slice(0, DISCORD_THREAD_NAME_MAX_LENGTH)
+    .trim();
+  return name === undefined || name.length === 0 ? undefined : name;
 }
 
 function createThreadName(content: string): string {

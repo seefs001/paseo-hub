@@ -21,11 +21,11 @@ import { createDiscordGatewaySource } from "../../triggers/discord/gateway.js";
 import { createDiscordTriggerProvider } from "../../triggers/discord/provider.js";
 import { organizationBillingUrl } from "../../triggers/failure-notice.js";
 import { createDiscordAttachmentResolver } from "../../triggers/discord/attachments.js";
-import { createDiscordReplyExecutor } from "../../triggers/discord/reply.js";
 import {
-  outputContextProvider,
-  replyWithFilesOutputTool,
-} from "../../execution-capabilities/outputs.js";
+  createDiscordReplyExecutor,
+  discordReplyOutputTool,
+} from "../../triggers/discord/reply.js";
+import { outputContextProvider } from "../../execution-capabilities/outputs.js";
 import {
   createDiscordConnectionClient,
   type DiscordConnectionClient,
@@ -126,7 +126,7 @@ export function createDiscordRegistration(
     outputs: [
       {
         type: "discord.reply",
-        tool: replyWithFilesOutputTool,
+        tool: discordReplyOutputTool,
         available: outputContextProvider("discord"),
         execute: createDiscordReplyExecutor({ bot }),
       },
