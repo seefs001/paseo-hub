@@ -30,6 +30,14 @@ export interface OutputExecutionInput {
   toolType: string;
   args: Record<string, unknown>;
   outputContext: unknown;
+  /** Files named in the tool's `files` argument, read from the agent's working directory. */
+  files?: readonly OutputFile[];
+}
+
+export interface OutputFile {
+  readonly name: string;
+  readonly mimeType: string;
+  readonly bytes: Buffer;
 }
 
 export type OutputExecutor = (input: OutputExecutionInput) => Promise<void>;
@@ -60,6 +68,31 @@ export const replyOutputTool: OutputToolDefinition = {
   inputSchema: {
     type: "object",
     properties: { content: { type: "string", minLength: 1 } },
+    required: ["content"],
+    additionalProperties: false,
+  },
+};
+
+export const maxReplyFiles = 10;
+export const maxReplyFileBytes = 25 * 1024 * 1024;
+
+/** The reply tool for providers that can upload files with a message. */
+export const replyWithFilesOutputTool: OutputToolDefinition = {
+  name: "reply",
+  description:
+    "Sends a reply to the conversation that triggered this execution. To attach images or other files, list their paths in `files`.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      content: { type: "string", minLength: 1 },
+      files: {
+        type: "array",
+        items: { type: "string", minLength: 1 },
+        maxItems: maxReplyFiles,
+        uniqueItems: true,
+        description: `Paths of files to attach, relative to your working directory. Each file must be inside the working directory and at most ${String(maxReplyFileBytes / 1024 / 1024)} MiB.`,
+      },
+    },
     required: ["content"],
     additionalProperties: false,
   },

@@ -18,9 +18,11 @@ import {
   HubExecutionOutboundSchema,
   HubDaemonHelloSchema,
   HubDaemonServerInfoEnvelopeSchema,
+  HubAgentFileReadRequestSchema,
+  HubAgentFileReadResponseSchema,
 } from "../hub/protocol.js";
 import { type DaemonConnection } from "./protocol.js";
-import type { HubProviderSnapshot } from "../hub/protocol.js";
+import type { HubAgentFile, HubProviderSnapshot } from "../hub/protocol.js";
 
 interface PendingAgentValidationRequest {
   kind: "agent-validation";
@@ -40,6 +42,12 @@ interface PendingProviderRefreshRequest {
   resolve(): void;
   reject(error: Error): void;
 }
+interface PendingAgentFileReadRequest {
+  kind: "agent-file-read";
+  generation: number;
+  resolve(value: HubAgentFile): void;
+  reject(error: Error): void;
+}
 interface AgentValidationIssue {
   path: readonly (string | number)[];
   message: string;
@@ -47,7 +55,8 @@ interface AgentValidationIssue {
 type PendingRequest =
   | PendingAgentValidationRequest
   | PendingProviderSnapshotRequest
-  | PendingProviderRefreshRequest;
+  | PendingProviderRefreshRequest
+  | PendingAgentFileReadRequest;
 interface ActiveSocket {
   agents: DaemonAgents;
   generation: number;
@@ -56,12 +65,14 @@ interface ActiveSocket {
   ready: boolean;
   presenceReady: Promise<void>;
   providerSnapshotSupported: boolean;
+  agentFileReadSupported: boolean;
 }
 
 export type DaemonSessionProtocol = "legacy" | "session-v1";
 
 const DAEMON_SESSION_PROTOCOL_HEADER = "x-paseo-session-protocol";
 const DAEMON_SESSION_PROTOCOL_VERSION = "1";
+const AGENT_FILE_READ_TIMEOUT_MS = 60_000;
 
 type DaemonConnectedHandler = (daemon: DaemonRecord) => void | Promise<void>;
 type DaemonRevokedHandler = (daemon: DaemonRecord) => void | Promise<void>;
@@ -99,6 +110,7 @@ export class ActiveDaemonRegistry {
       ready: false,
       presenceReady: Promise.resolve(),
       providerSnapshotSupported: false,
+      agentFileReadSupported: false,
     };
     this.active.set(daemon.id, active);
     previous?.agents.close();
@@ -274,6 +286,51 @@ export class ActiveDaemonRegistry {
     });
   }
 
+  /** Reads a file inside a daemon agent's working directory, for Hub to attach to a reply. */
+  readAgentFile(input: {
+    daemonId: string;
+    agentId: string;
+    path: string;
+    maxBytes: number;
+  }): Promise<HubAgentFile> {
+    const active = this.active.get(input.daemonId);
+    if (!active?.ready) return Promise.reject(new Error("daemon_not_connected"));
+    if (!active.daemon.permissions.includes("hub.execute")) {
+      return Promise.reject(new Error("daemon_execution_not_allowed"));
+    }
+    if (!active.agentFileReadSupported) {
+      return Promise.reject(new Error("Update the Paseo daemon to attach files to Hub replies"));
+    }
+    const requestId = randomUUID();
+    const request = HubAgentFileReadRequestSchema.parse({
+      type: "hub.agent.file.read.request",
+      requestId,
+      agentId: input.agentId,
+      path: input.path,
+      maxBytes: input.maxBytes,
+    });
+    const pending = this.pendingFor(input.daemonId);
+    return new Promise<HubAgentFile>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        pending.delete(requestId);
+        reject(new Error("daemon did not return the file in time"));
+      }, AGENT_FILE_READ_TIMEOUT_MS);
+      pending.set(requestId, {
+        kind: "agent-file-read",
+        generation: active.generation,
+        resolve: (file) => {
+          clearTimeout(timeout);
+          resolve(file);
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+      });
+      active.socket.send(JSON.stringify({ type: "session", message: request }));
+    });
+  }
+
   private requireProviderSnapshotConnection(daemonId: string): ActiveSocket {
     const active = this.active.get(daemonId);
     if (!active?.ready) throw new Error("daemon_not_connected");
@@ -298,6 +355,7 @@ export class ActiveDaemonRegistry {
         active,
         serverInfo.data.message.payload.permissions,
         serverInfo.data.message.payload.features?.providersSnapshot === true,
+        serverInfo.data.message.payload.features?.hubAgentFileRead === true,
       );
       return;
     }
@@ -312,18 +370,22 @@ export class ActiveDaemonRegistry {
       return this.receiveProviderSnapshot(active, providerSnapshot.data);
     const providerRefresh = RefreshProvidersSnapshotResponseSchema.safeParse(message);
     if (providerRefresh.success) return this.receiveProviderRefresh(active, providerRefresh.data);
+    const agentFile = HubAgentFileReadResponseSchema.safeParse(message);
+    if (agentFile.success) return this.receiveAgentFile(active, agentFile.data);
   }
 
   private acceptServerInfo(
     active: ActiveSocket,
     permissions: readonly string[],
     providerSnapshotSupported = false,
+    agentFileReadSupported = false,
   ): void {
     if (!samePermissions(permissions, active.daemon.permissions)) {
       active.socket.close(4403, "daemon session permissions do not match enrollment");
       return;
     }
     active.providerSnapshotSupported = providerSnapshotSupported;
+    active.agentFileReadSupported = agentFileReadSupported;
     this.markReady(active);
   }
 
@@ -442,6 +504,27 @@ export class ActiveDaemonRegistry {
       return;
     }
     pending.resolve();
+  }
+
+  private receiveAgentFile(
+    active: ActiveSocket,
+    response: z.infer<typeof HubAgentFileReadResponseSchema>,
+  ): void {
+    const requests = this.pendingFor(active.daemon.id);
+    const pending = requests.get(response.payload.requestId);
+    if (
+      !pending ||
+      pending.kind !== "agent-file-read" ||
+      pending.generation !== active.generation
+    ) {
+      return;
+    }
+    requests.delete(response.payload.requestId);
+    if (response.payload.file === null) {
+      pending.reject(new Error(response.payload.error ?? "daemon could not read the file"));
+      return;
+    }
+    pending.resolve(response.payload.file);
   }
 
   private receiveRpcError(

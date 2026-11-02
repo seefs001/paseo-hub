@@ -70,6 +70,7 @@ export interface DiscordPostInput {
 
 export interface DiscordConversationReplyInput extends DiscordPostInput {
   messageId: string;
+  files?: readonly { name: string; bytes: Buffer }[];
 }
 
 export interface DiscordBotClient {
@@ -229,7 +230,13 @@ export function createDiscordBotClient(options: CreateDiscordBotClientOptions): 
         input.threadId === undefined || input.threadId === null
           ? await resolveReplyDestination(client, input, pendingReplyDestinations)
           : await fetchSendableChannel(client, input.threadId);
-      await channel.send({ content: input.content, allowedMentions: { parse: [] } });
+      await channel.send({
+        content: input.content,
+        allowedMentions: { parse: [] },
+        ...(input.files === undefined || input.files.length === 0
+          ? {}
+          : { files: input.files.map((file) => ({ attachment: file.bytes, name: file.name })) }),
+      });
     },
     async readMessage(input) {
       const message = await fetchMessage(

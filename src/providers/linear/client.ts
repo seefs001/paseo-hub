@@ -8,6 +8,7 @@ export const LINEAR_REQUIRED_SCOPES = ["read", "comments:create"] as const;
 export const LINEAR_ISSUE_CONTEXT_LIMIT = 50;
 export const LINEAR_ISSUE_COMMENT_CONTEXT_LIMIT = LINEAR_ISSUE_CONTEXT_LIMIT - 1;
 const LINEAR_ACCESS_TOKEN_REFRESH_SKEW_MS = 60_000;
+const LINEAR_UPLOAD_TIMEOUT_MS = 120_000;
 
 const LinearTokenResponseSchema = z
   .object({
@@ -23,6 +24,21 @@ const ViewerResponseSchema = z.object({
     viewer: z.object({
       id: z.string().min(1),
       organization: z.object({ id: z.string().min(1), name: z.string().min(1) }),
+    }),
+  }),
+});
+
+const FileUploadResponseSchema = z.object({
+  data: z.object({
+    fileUpload: z.object({
+      success: z.boolean(),
+      uploadFile: z
+        .object({
+          uploadUrl: z.url(),
+          assetUrl: z.url(),
+          headers: z.array(z.object({ key: z.string(), value: z.string() })),
+        })
+        .nullish(),
     }),
   }),
 });
@@ -152,6 +168,13 @@ export interface LinearApiClient {
     issueId: string;
     body: string;
   }): Promise<void>;
+  /** Uploads a file to Linear storage and returns its asset URL for use in Markdown. */
+  uploadFile?(input: {
+    linearOrganizationId: string;
+    name: string;
+    mimeType: string;
+    bytes: Buffer;
+  }): Promise<string>;
 }
 
 export function hasRequiredLinearScopes(scopes: readonly string[]): boolean {
@@ -400,6 +423,40 @@ export function createLinearApiClient(options: {
       );
       if (!result.data.commentCreate.success) throw new Error("Linear comment was not accepted");
     },
+    async uploadFile(input) {
+      const result = FileUploadResponseSchema.parse(
+        await graphql(request, await accessTokenFor(input.linearOrganizationId), {
+          query: `mutation PaseoFileUpload($contentType: String!, $filename: String!, $size: Int!) {
+            fileUpload(contentType: $contentType, filename: $filename, size: $size) {
+              success
+              uploadFile { uploadUrl assetUrl headers { key value } }
+            }
+          }`,
+          variables: {
+            contentType: input.mimeType,
+            filename: input.name,
+            size: input.bytes.byteLength,
+          },
+        }),
+      );
+      const upload = result.data.fileUpload.uploadFile;
+      if (!result.data.fileUpload.success || upload === null || upload === undefined) {
+        throw new Error("Linear did not accept the file upload");
+      }
+      const headers = new Headers({
+        "content-type": input.mimeType,
+        "cache-control": "public, max-age=31536000",
+      });
+      for (const { key, value } of upload.headers) headers.set(key, value);
+      const response = await request(upload.uploadUrl, {
+        method: "PUT",
+        headers,
+        body: new Uint8Array(input.bytes),
+        signal: AbortSignal.timeout(LINEAR_UPLOAD_TIMEOUT_MS),
+      });
+      if (!response.ok) throw new Error(`Linear file upload HTTP ${response.status}`);
+      return upload.assetUrl;
+    },
   };
 }
 
@@ -456,7 +513,7 @@ async function readViewer(request: typeof fetch, accessToken: string) {
 async function graphql(
   request: typeof fetch,
   accessToken: string,
-  payload: { query: string; variables: Record<string, string> },
+  payload: { query: string; variables: Record<string, string | number> },
 ): Promise<unknown> {
   const response = await request("https://api.linear.app/graphql", {
     method: "POST",

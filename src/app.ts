@@ -1,6 +1,6 @@
 import { createScheduleSource, createScheduleProvider } from "./triggers/schedule/index.js";
 import { createExecutionCapabilityServer } from "./execution-capabilities/server.js";
-import { OutputExecutorRegistry } from "./execution-capabilities/outputs.js";
+import { maxReplyFileBytes, OutputExecutorRegistry } from "./execution-capabilities/outputs.js";
 import {
   createAttachmentCapabilityRegistry,
   type AttachmentCapabilityRegistry,
@@ -14,6 +14,7 @@ import {
 } from "./configuration/store.js";
 import type {
   AcceptedTriggerRunRecord,
+  AgentExecutionRecord,
   Database,
   TriggerRunRecord,
   WorkflowDeadlineRecovery,
@@ -161,6 +162,7 @@ export function createHubApplication(options: HubRuntimeOptions): HubApplication
     options,
     daemonModule,
     outputRegistry,
+    daemons,
   );
   const registration =
     options.database === null || daemons === null
@@ -413,6 +415,7 @@ function createAppExecutionCapabilityServer(
   options: HubRuntimeOptions,
   daemonModule: DaemonModule | null,
   outputRegistry: OutputExecutorRegistry,
+  daemons: ActiveDaemonRegistry | null,
 ) {
   if (options.database === null || daemonModule === null) {
     return null;
@@ -425,6 +428,26 @@ function createAppExecutionCapabilityServer(
     outputs: outputRegistry,
     completeExecution: (input) =>
       daemonModule.lifecycle.completeAgentExecutionFromCallback(input, { deferHubAction: true }),
+    ...(daemons === null
+      ? {}
+      : {
+          readExecutionFile: async (execution: AgentExecutionRecord, path: string) => {
+            if (execution.daemonId === null || execution.daemonAgentId === null) {
+              throw new Error("execution has no daemon agent");
+            }
+            const file = await daemons.readAgentFile({
+              daemonId: execution.daemonId,
+              agentId: execution.daemonAgentId,
+              path,
+              maxBytes: maxReplyFileBytes,
+            });
+            return {
+              name: file.fileName,
+              mimeType: file.mimeType,
+              bytes: Buffer.from(file.contentBase64, "base64"),
+            };
+          },
+        }),
   });
 }
 

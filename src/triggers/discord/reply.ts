@@ -29,6 +29,7 @@ export function createDiscordReplyExecutor(
       threadId: context.threadId ?? null,
       messageId: context.messageId,
       content: args.content,
+      ...(input.files === undefined ? {} : { files: input.files }),
     });
   };
 }

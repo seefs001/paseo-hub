@@ -16,6 +16,7 @@ import {
   finishExecutionToolName,
   type MaterializedOutputCapability,
   type OutputExecutorRegistry,
+  type OutputFile,
   type OutputToolSchema,
 } from "./outputs.js";
 
@@ -35,6 +36,8 @@ interface ExecutionCapabilityOptions {
     token: string;
     output?: unknown;
   }): Promise<AgentExecutionRecord>;
+  /** Reads a file the agent named in an output tool's `files` argument. */
+  readExecutionFile?(execution: AgentExecutionRecord, path: string): Promise<OutputFile>;
   now?: () => Date;
 }
 
@@ -188,16 +191,7 @@ async function authenticateExecution(
 }
 
 function createMcpServer(
-  options: {
-    database: Database;
-    outputs: OutputExecutorRegistry;
-    completeExecution(input: {
-      executionId: string;
-      token: string;
-      output?: unknown;
-    }): Promise<AgentExecutionRecord>;
-    now?: () => Date;
-  },
+  options: ExecutionCapabilityOptions,
   execution: AgentExecutionRecord,
   token: string,
   materializedOutputs: readonly MaterializedOutputCapability[],
@@ -222,7 +216,7 @@ function createMcpServer(
 }
 
 async function callExecutionTool(
-  options: Pick<ExecutionCapabilityOptions, "database" | "outputs" | "completeExecution" | "now">,
+  options: ExecutionCapabilityOptions,
   execution: AgentExecutionRecord,
   token: string,
   materializedOutputs: readonly MaterializedOutputCapability[],
@@ -317,6 +311,8 @@ async function executeOutputCall(
   output: MaterializedOutputCapability,
   args: Record<string, unknown>,
 ) {
+  const files = await readOutputFiles(options, execution, args);
+  if (!files.ok) return toolFailure(files.message);
   const attempt = await options.database.beginAgentExecutionOutput(
     execution.id,
     output.declaration.type,
@@ -342,6 +338,7 @@ async function executeOutputCall(
       toolType: output.declaration.type,
       args,
       outputContext: execution.outputContext,
+      ...(files.files.length === 0 ? {} : { files: files.files }),
     });
     const recorded = await options.database.completeAgentExecutionOutput(
       execution.id,
@@ -376,6 +373,40 @@ async function executeOutputCall(
       ),
     );
   }
+}
+
+async function readOutputFiles(
+  options: ExecutionCapabilityOptions,
+  execution: AgentExecutionRecord,
+  args: Record<string, unknown>,
+): Promise<{ ok: true; files: readonly OutputFile[] } | { ok: false; message: string }> {
+  const paths = z.array(z.string()).catch([]).parse(args["files"]);
+  if (paths.length === 0) return { ok: true, files: [] };
+  if (options.readExecutionFile === undefined) {
+    return { ok: false, message: "This Hub cannot attach files to outputs." };
+  }
+  const files: OutputFile[] = [];
+  for (const path of paths) {
+    try {
+      files.push(await options.readExecutionFile(execution, path));
+    } catch (error) {
+      reportFailure(
+        error,
+        {
+          operation: "execution_capability.output.read_file",
+          component: "execution_capabilities",
+          executionId: execution.id,
+        },
+        { kind: "validation" },
+      );
+      const reason = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        message: `Could not attach ${path}: ${reason}. Use a path inside your working directory, then call the tool again.`,
+      };
+    }
+  }
+  return { ok: true, files };
 }
 
 async function closeCapabilityResource(

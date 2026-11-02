@@ -103,7 +103,12 @@ export const HubDaemonServerInfoEnvelopeSchema = z.object({
       .object({
         status: z.literal("server_info"),
         permissions: z.array(z.string()),
-        features: z.object({ providersSnapshot: z.boolean().optional() }).optional(),
+        features: z
+          .object({
+            providersSnapshot: z.boolean().optional(),
+            hubAgentFileRead: z.boolean().optional(),
+          })
+          .optional(),
       })
       .passthrough(),
   }),
@@ -222,6 +227,31 @@ export const RefreshProvidersSnapshotResponseSchema = z.object({
   }),
 });
 
+export const HubAgentFileReadRequestSchema = z.object({
+  type: z.literal("hub.agent.file.read.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  path: z.string(),
+  maxBytes: z.number().int().positive(),
+});
+
+export const HubAgentFileReadResponseSchema = z.object({
+  type: z.literal("hub.agent.file.read.response"),
+  payload: z.object({
+    requestId: z.string(),
+    file: z
+      .object({
+        path: z.string(),
+        fileName: z.string(),
+        mimeType: z.string(),
+        size: z.number().int().nonnegative(),
+        contentBase64: z.string(),
+      })
+      .nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const HubExecutionControlActionSchema = z.enum(["interrupt", "archive"]);
 
 const RpcErrorSchema = z.object({
@@ -240,6 +270,7 @@ export const HubExecutionOutboundSchema = z.object({
     HubExecutionAgentValidateResponseSchema,
     GetProvidersSnapshotResponseSchema,
     RefreshProvidersSnapshotResponseSchema,
+    HubAgentFileReadResponseSchema,
     RpcErrorSchema,
   ]),
 });
@@ -249,3 +280,6 @@ export type HubExecutionAgentStreamEvent = z.infer<typeof HubExecutionAgentStrea
 export type HubExecutionControlAction = z.infer<typeof HubExecutionControlActionSchema>;
 export type HubProviderSnapshot = z.infer<typeof GetProvidersSnapshotResponseSchema>["payload"];
 export type HubProviderSnapshotEntry = z.infer<typeof ProviderSnapshotEntrySchema>;
+export type HubAgentFile = NonNullable<
+  z.infer<typeof HubAgentFileReadResponseSchema>["payload"]["file"]
+>;

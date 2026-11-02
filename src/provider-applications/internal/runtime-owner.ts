@@ -1,7 +1,7 @@
 import type { AuthServer } from "../../auth/server.js";
 import { createHash } from "node:crypto";
 import type { Database } from "../../db/types.js";
-import { replyOutputTool } from "../../execution-capabilities/outputs.js";
+import { replyOutputTool, replyWithFilesOutputTool } from "../../execution-capabilities/outputs.js";
 import { logger } from "../../logger.js";
 import { reportFailure } from "../../failures/index.js";
 import { createDiscordRegistration } from "../../providers/discord/index.js";
@@ -401,7 +401,10 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
       outputs: [
         {
           type: `${provider}.reply`,
-          tool: replyOutputTool,
+          tool:
+            provider === "discord" || provider === "linear"
+              ? replyWithFilesOutputTool
+              : replyOutputTool,
           available: (context) => {
             const output = slot.active?.registration.outputs.find(
               (candidate) => candidate.type === `${provider}.reply`,

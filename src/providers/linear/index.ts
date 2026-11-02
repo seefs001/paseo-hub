@@ -19,7 +19,10 @@ import type {
   Database,
   LinearConnectionRecord,
 } from "../../db/types.js";
-import { outputContextProvider, replyOutputTool } from "../../execution-capabilities/outputs.js";
+import {
+  outputContextProvider,
+  replyWithFilesOutputTool,
+} from "../../execution-capabilities/outputs.js";
 import { logger } from "../../logger.js";
 import { createLinearTriggerProvider } from "../../triggers/linear/provider.js";
 import { createLinearReplyExecutor } from "../../triggers/linear/reply.js";
@@ -180,7 +183,7 @@ export function createLinearRegistration(
         : [
             {
               type: "linear.reply",
-              tool: replyOutputTool,
+              tool: replyWithFilesOutputTool,
               available: outputContextProvider("linear"),
               execute: createLinearReplyExecutor({ client: api }),
             },
