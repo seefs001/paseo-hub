@@ -26,6 +26,7 @@ import {
   discordReplyOutputTool,
 } from "../../triggers/discord/reply.js";
 import { outputContextProvider } from "../../execution-capabilities/outputs.js";
+import { createConversationChoices } from "../../conversation-choices/index.js";
 import {
   createDiscordConnectionClient,
   type DiscordConnectionClient,
@@ -100,8 +101,10 @@ export function createDiscordRegistration(
           },
           client,
         );
+  const choices = createConversationChoices({ database });
   const gateway = createDiscordGatewaySource({
     bot,
+    choices,
     accept: (input) => database.acceptDiscordEvent(input),
     applyGuildDelete: (guildId, unavailable) =>
       applyGuildRemoval(database, client, guildId, unavailable),
@@ -130,7 +133,8 @@ export function createDiscordRegistration(
         type: "discord.reply",
         tool: discordReplyOutputTool,
         available: outputContextProvider("discord"),
-        execute: createDiscordReplyExecutor({ bot }),
+        choices: true,
+        execute: createDiscordReplyExecutor({ bot, choices }),
       },
     ],
     requests: [],

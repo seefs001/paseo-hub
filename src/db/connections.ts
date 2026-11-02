@@ -14,6 +14,8 @@ import type {
   BindGitHubConnectionInput,
   BindLinearConnectionInput,
   BindSlackConnectionInput,
+  BindTelegramConnectionInput,
+  BoundTelegramConnection,
   CompleteLinearProviderApplicationInput,
   CompleteSlackProviderApplicationInput,
   ConnectionAccountAccess,
@@ -28,6 +30,7 @@ import type {
   ReadConnectionAttemptInput,
   SlackConnectionRecord,
   StartConnectionAttemptInput,
+  TelegramConnectionRecord,
   UpdateLinearConnectionTokensInput,
 } from "./types.js";
 
@@ -225,6 +228,98 @@ export class ConnectionRepository {
         })
         .returning({ id: schema.discordConnections.id });
     });
+  }
+
+  /**
+   * The bot binds the chat it received the attempt state in. There is no browser session here, so
+   * the attempt is found by its state alone; the member who started it must still manage the
+   * organization, and the provider application must be the one the attempt began with.
+   */
+  async bindTelegram(input: BindTelegramConnectionInput): Promise<BoundTelegramConnection> {
+    return this.runtime.transaction(async (runtimeTransaction) => {
+      const transaction = runtimeTransaction.drizzle();
+      const [attempt] = await transaction
+        .select()
+        .from(schema.organizationConnectionAttempts)
+        .where(
+          and(
+            eq(schema.organizationConnectionAttempts.stateVerifier, input.stateVerifier),
+            eq(schema.organizationConnectionAttempts.phase, "telegram_authorization"),
+            isNull(schema.organizationConnectionAttempts.consumedAt),
+          ),
+        )
+        .for("update");
+      if (attempt === undefined || (await expiredAtDatabaseClock(transaction, attempt.expiresAt)))
+        throw new ConnectionAttemptUnavailableError();
+      await lockStoredAuthority(transaction, attempt);
+      await lockProviderApplication(this.locks, runtimeTransaction, "telegram");
+      await requireCurrentAttempt(transaction, attempt, input.providerApplicationId);
+      await lockExternal(this.locks, runtimeTransaction, "telegram", input.chatId);
+      const [existing] = await transaction
+        .select({ id: schema.telegramConnections.id })
+        .from(schema.telegramConnections)
+        .where(eq(schema.telegramConnections.chatId, input.chatId))
+        .limit(1);
+      if (existing !== undefined) throw new ConnectionConflictError();
+      const [row] = await transaction
+        .insert(schema.telegramConnections)
+        .values({
+          organizationId: attempt.organizationId,
+          chatId: input.chatId,
+          chatType: input.chatType,
+          chatTitle: input.chatTitle,
+          providerApplicationId: input.providerApplicationId,
+          slug: await uniqueConnectionSlug(
+            transaction,
+            attempt.organizationId,
+            "telegram",
+            input.chatTitle,
+          ),
+          connectedByUserId: attempt.userId,
+        })
+        .returning();
+      if (row === undefined) throw new Error("Telegram connection unavailable");
+      const [organization] = await transaction
+        .select({ name: schema.organizations.name })
+        .from(schema.organizations)
+        .where(eq(schema.organizations.id, attempt.organizationId));
+      await consumeLockedAttempt(transaction, attempt.id);
+      return { connection: telegramConnection(row), organizationName: organization?.name ?? "" };
+    });
+  }
+
+  async findTelegram(chatId: string): Promise<TelegramConnectionRecord | undefined> {
+    const [row] = await this.database
+      .select()
+      .from(schema.telegramConnections)
+      .where(eq(schema.telegramConnections.chatId, chatId))
+      .limit(1);
+    return row === undefined ? undefined : telegramConnection(row);
+  }
+
+  async removeTelegram(chatId: string): Promise<void> {
+    await this.runtime.transaction(async (runtimeTransaction) => {
+      const transaction = runtimeTransaction.drizzle();
+      const [connection] = await transaction
+        .select({ id: schema.telegramConnections.id })
+        .from(schema.telegramConnections)
+        .where(eq(schema.telegramConnections.chatId, chatId))
+        .for("update");
+      if (connection === undefined) return;
+      await transaction
+        .delete(schema.projectTriggerRoutes)
+        .where(eq(schema.projectTriggerRoutes.connectionId, connection.id));
+      await transaction
+        .delete(schema.telegramConnections)
+        .where(eq(schema.telegramConnections.id, connection.id));
+    });
+  }
+
+  async moveTelegram(fromChatId: string, toChatId: string): Promise<void> {
+    await this.database
+      .update(schema.telegramConnections)
+      .set({ chatId: toChatId, chatType: "supergroup", updatedAt: sql`clock_timestamp()` })
+      .where(eq(schema.telegramConnections.chatId, fromChatId));
   }
 
   async bindSlack(input: BindSlackConnectionInput): Promise<void> {
@@ -621,6 +716,26 @@ export class ConnectionRepository {
           provider,
           guildId: connection.guildId,
         } as const;
+      }
+      if (provider === "telegram") {
+        const [connection] = await transaction
+          .select({ chatId: schema.telegramConnections.chatId })
+          .from(schema.telegramConnections)
+          .where(
+            and(
+              eq(schema.telegramConnections.id, connectionId),
+              eq(schema.telegramConnections.organizationId, access.organizationId),
+            ),
+          )
+          .for("update");
+        if (connection === undefined) throw new ConnectionAccessDeniedError();
+        await transaction
+          .delete(schema.projectTriggerRoutes)
+          .where(eq(schema.projectTriggerRoutes.connectionId, connectionId));
+        await transaction
+          .delete(schema.telegramConnections)
+          .where(eq(schema.telegramConnections.id, connectionId));
+        return { provider, chatId: connection.chatId } as const;
       }
       if (provider === "linear") {
         const [connection] = await transaction
@@ -1061,6 +1176,7 @@ async function consumeLockedAttempt(transaction: HubTransaction, attemptId: stri
 function initialConnectionAttemptPhase(provider: ConnectionProvider): ConnectionAttemptPhase {
   if (provider === "github") return "github_setup";
   if (provider === "discord") return "discord_authorization";
+  if (provider === "telegram") return "telegram_authorization";
   return provider === "slack" ? "slack_authorization" : "linear_authorization";
 }
 
@@ -1113,6 +1229,19 @@ function discordConnection(
     providerApplicationId: row.providerApplicationId,
   };
 }
+function telegramConnection(
+  row: typeof schema.telegramConnections.$inferSelect,
+): TelegramConnectionRecord {
+  return {
+    id: row.id,
+    organizationId: row.organizationId,
+    slug: row.slug,
+    chatId: row.chatId,
+    chatType: row.chatType,
+    chatTitle: row.chatTitle,
+    providerApplicationId: row.providerApplicationId,
+  };
+}
 function slackConnection(row: typeof schema.slackConnections.$inferSelect): SlackConnectionRecord {
   return {
     id: row.id,
@@ -1160,6 +1289,8 @@ async function uniqueConnectionSlug(
       select slug from discord_connections where organization_id = ${organizationId}
       union all
       select slug from linear_connections where organization_id = ${organizationId}
+      union all
+      select slug from telegram_connections where organization_id = ${organizationId}
     ) slugs
     where slug = ${base} or slug like ${`${base}-%`}
     order by slug

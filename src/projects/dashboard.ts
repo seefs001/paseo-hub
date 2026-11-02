@@ -258,6 +258,12 @@ function connectionUsageView(
       linearOrganizationName: connection.linearOrganizationName,
       requiresReauthorization: linearConnectionRequiresReauthorization(connection),
     })),
+    telegram: (connections.telegram ?? []).map((connection) => ({
+      id: connection.id,
+      slug: connection.slug,
+      chatId: connection.chatId,
+      chatTitle: connection.chatTitle,
+    })),
   };
 }
 

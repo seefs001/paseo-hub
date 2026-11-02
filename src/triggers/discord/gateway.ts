@@ -1,9 +1,19 @@
 import type { Message } from "discord.js";
+import {
+  choiceClickNotice,
+  choiceResolutionText,
+  type ConversationChoices,
+} from "../../conversation-choices/index.js";
 import type { ProviderEventAcceptance } from "../../db/types.js";
 import type { TriggerHandler, TriggerSource } from "../index.js";
 import type { ProviderEventDropReasonCode } from "../drop-reason.js";
 import { logProviderEventIntake } from "../audit.js";
-import type { DiscordBotClient, DiscordReactionAddHandler } from "./bot.js";
+import type {
+  DiscordBotClient,
+  DiscordButtonClick,
+  DiscordButtonClickResult,
+  DiscordReactionAddHandler,
+} from "./bot.js";
 import { NormalizedDiscordMessageEventSchema } from "./events.js";
 import type { NormalizedDiscordMessageEvent } from "./events.js";
 
@@ -18,6 +28,8 @@ export interface CreateDiscordGatewaySourceOptions {
     dropReason?: ProviderEventDropReasonCode;
   }): Promise<ProviderEventAcceptance>;
   applyGuildDelete(guildId: string, unavailable: boolean): Promise<void>;
+  /** Resolves clicks on choice buttons; without it the bot ignores button clicks. */
+  choices?: ConversationChoices;
 }
 
 export function createDiscordGatewaySource(
@@ -27,6 +39,7 @@ export function createDiscordGatewaySource(
   let unsubscribe: (() => void) | undefined;
   let unsubscribeReactions: (() => void) | undefined;
   let unsubscribeGuildDelete: (() => void) | undefined;
+  let unsubscribeButtons: (() => void) | undefined;
 
   return {
     async start(handler) {
@@ -44,6 +57,12 @@ export function createDiscordGatewaySource(
       unsubscribeGuildDelete = options.bot.onGuildDelete(async (guild) => {
         await options.applyGuildDelete(guild.id, guild.unavailable);
       });
+      const choices = options.choices;
+      if (choices !== undefined) {
+        unsubscribeButtons = options.bot.onButtonClick?.((click) =>
+          dispatchChoice(click, choices, handlers, options),
+        );
+      }
     },
     async stop() {
       handlers.clear();
@@ -55,6 +74,8 @@ export function createDiscordGatewaySource(
       unsubscribeReactions = undefined;
       unsubscribeGuildDelete?.();
       unsubscribeGuildDelete = undefined;
+      unsubscribeButtons?.();
+      unsubscribeButtons = undefined;
       await options.bot.stop();
     },
   };
@@ -157,6 +178,42 @@ async function dispatchReaction(
     // The reacted message can be old; the event is the reaction, which is now.
     { receivedAt: new Date(), handlers, options },
   );
+}
+
+async function dispatchChoice(
+  click: DiscordButtonClick,
+  choices: ConversationChoices,
+  handlers: Set<TriggerHandler>,
+  options: CreateDiscordGatewaySourceOptions,
+): Promise<DiscordButtonClickResult> {
+  const result = await choices.select({
+    provider: "discord",
+    buttonId: click.customId,
+    user: { id: click.user.id, username: click.user.username },
+  });
+  if (result.status !== "selected") return { notice: choiceClickNotice(result) };
+  await deliver(
+    NormalizedDiscordMessageEventSchema.parse({
+      type: "choice",
+      id: click.messageId,
+      guildId: click.guildId,
+      channelId: click.channelId,
+      threadId: click.threadId,
+      parentChannelId: click.parentChannelId,
+      messageId: click.messageId,
+      content: result.selection.label,
+      mentionedUserIds: [],
+      author: click.user,
+      createdAt: new Date().toISOString(),
+      attachments: [],
+      referencedMessage: null,
+      choice: result.selection,
+    }),
+    "discord.choice_selected",
+    `discord-choice-${result.choice.id}`,
+    { receivedAt: new Date(), handlers, options },
+  );
+  return { resolved: choiceResolutionText(result.choice) };
 }
 
 async function deliver(

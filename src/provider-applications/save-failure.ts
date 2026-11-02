@@ -117,6 +117,7 @@ export function providerHost(provider: Provider): string {
   if (provider === "github") return "api.github.com";
   if (provider === "slack") return "slack.com";
   if (provider === "linear") return "linear.app";
+  if (provider === "telegram") return "api.telegram.org";
   return "discord.com";
 }
 
@@ -124,12 +125,17 @@ export function providerName(provider: Provider): string {
   if (provider === "github") return "GitHub";
   if (provider === "slack") return "Slack";
   if (provider === "linear") return "Linear";
+  if (provider === "telegram") return "Telegram";
   return "Discord";
 }
 
-/** GitHub calls it an App, Discord an application, Slack an app. Use each provider's own word. */
+/**
+ * GitHub calls it an App, Discord an application, Slack an app, Telegram a bot. Use each
+ * provider's own word.
+ */
 function applicationNoun(provider: Provider): string {
   if (provider === "github") return "App";
+  if (provider === "telegram") return "bot";
   return "application";
 }
 
@@ -159,6 +165,9 @@ function credentialMessage(provider: Provider, subject: string | undefined): str
       return "Discord rejected the Client Secret. Nothing was saved. Open OAuth2, reset the Client Secret, copy it, then verify again.";
     }
     return "Discord rejected these credentials. Nothing was saved. Check the Application ID, Client Secret, and bot token, then verify again.";
+  }
+  if (provider === "telegram") {
+    return "Telegram rejected the bot token. Nothing was saved. Ask @BotFather for the token with /token, copy all of it, then verify again.";
   }
   if (provider === "linear") {
     return "Linear rejected these app credentials. Nothing was saved. Check the Client ID and Client Secret in the Linear application, then continue again.";

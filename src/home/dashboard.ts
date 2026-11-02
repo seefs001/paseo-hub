@@ -14,10 +14,10 @@ const RUNS_SHOWN = 50;
 
 export interface HomeSnapshot {
   organization: { id: string; name: string; slug: string };
-  /** Whether any provider app (GitHub, Slack, Discord, Linear) is set up on this Hub at all. */
+  /** Whether any provider app (GitHub, Slack, Discord, Linear, Telegram) is set up on this Hub. */
   appsConfigured: boolean;
   connections: readonly {
-    provider: "github" | "slack" | "discord" | "linear";
+    provider: "github" | "slack" | "discord" | "linear" | "telegram";
     slug: string;
     label: string;
   }[];
@@ -92,6 +92,11 @@ export class HomeDashboard {
           provider: "linear" as const,
           slug,
           label: linearOrganizationName,
+        })),
+        ...(connections.telegram ?? []).map(({ slug, chatTitle }) => ({
+          provider: "telegram" as const,
+          slug,
+          label: chatTitle,
         })),
       ],
       daemons: daemons

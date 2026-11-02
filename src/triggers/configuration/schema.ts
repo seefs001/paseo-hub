@@ -48,9 +48,12 @@ export const TriggerFilterSchema = z
     exclude_labels: z.array(z.string().min(1)).min(1).optional(),
     assignees: z.array(z.string().min(1)).min(1).optional(),
     channels: z.array(z.string().min(1)).optional(),
-    /** Discord: unmentioned messages continue a conversation in a thread the bot started. */
+    /**
+     * Discord: unmentioned messages continue a conversation in a thread the bot started.
+     * Telegram: unaddressed messages continue a conversation in its topic or reply chain.
+     */
     thread_messages: z.boolean().optional(),
-    /** Discord reactions which start a run: a Unicode emoji, or a custom emoji's name or ID. */
+    /** Reactions which start a run: a Unicode emoji, or a custom Discord emoji's name or ID. */
     emojis: z.array(z.string().min(1)).min(1).optional(),
     from_users: z.array(z.string().min(1)).optional(),
     inputs: z.record(z.string(), InputValueSchema).optional(),
@@ -97,6 +100,8 @@ export const TriggerOutputSchema = z
   .object({
     max: z.number().int().positive().optional(),
     required: z.boolean().optional(),
+    /** Discord and Telegram replies: the agent may attach buttons; a click continues the run. */
+    choices: z.boolean().optional(),
   })
   .strict();
 

@@ -670,11 +670,78 @@ export const LINEAR_GUIDE: ProviderGuide = {
   receivesEvents: true,
 };
 
+export const TELEGRAM_GUIDE: ProviderGuide = {
+  provider: "telegram",
+  name: "Telegram",
+  summary: "Reads mentions in your groups and chats, and replies in the conversation.",
+  portal: { label: "Open @BotFather", href: "https://t.me/BotFather" },
+  formTitle: "Paste from @BotFather",
+  summaryLabels: { identity: "Bot", connections: "Chats" },
+  environmentVariables: ["TELEGRAM_BOT_TOKEN"],
+  groups: [
+    {
+      id: "bot",
+      steps: [
+        {
+          segments: [
+            { kind: "text", value: "Open " },
+            { kind: "link", value: "@BotFather", href: "https://t.me/BotFather" },
+            { kind: "text", value: ", send " },
+            { kind: "term", value: "/newbot" },
+            { kind: "text", value: ", and give the bot a name and a username." },
+          ],
+        },
+        {
+          segments: [
+            { kind: "text", value: "Copy the " },
+            { kind: "term", value: "HTTP API" },
+            { kind: "text", value: " token @BotFather sends back." },
+          ],
+        },
+        {
+          segments: [
+            {
+              kind: "text",
+              value:
+                "Optional, per group: make the bot an administrator with no extra rights. Telegram then sends it plain @mentions, reactions, and unaddressed messages in its conversations. Without it, commands such as ",
+            },
+            { kind: "term", value: "/ask@your_bot" },
+            { kind: "text", value: " and replies to the bot still work." },
+          ],
+        },
+      ],
+      fields: [
+        {
+          name: "botToken",
+          label: "Bot token",
+          kind: "secret",
+          description: "From @BotFather.",
+          required: "Enter the bot token.",
+        },
+      ],
+    },
+  ],
+  urls: [],
+  savingContinues: false,
+  actions: {
+    save: "Verify and save",
+    savePending: "Verifying…",
+    connect: "Add to a Telegram chat",
+    connectAgain: "Add to another chat",
+  },
+  verifiedMessage: "Telegram accepted this bot.",
+  requiresHttps: false,
+  httpsRequirement: (origin) =>
+    `Telegram reaches ${origin} by webhook over HTTPS, and Hub polls Telegram otherwise.`,
+  receivesEvents: true,
+};
+
 export const PROVIDER_GUIDES: readonly ProviderGuide[] = [
   GITHUB_GUIDE,
   SLACK_GUIDE,
   DISCORD_GUIDE,
   LINEAR_GUIDE,
+  TELEGRAM_GUIDE,
 ];
 
 export function guideFor(provider: Provider): ProviderGuide {

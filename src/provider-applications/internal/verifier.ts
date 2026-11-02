@@ -18,6 +18,10 @@ const discordIdentitySchema = z.object({
   bot: z.literal(true),
 });
 const discordTokenSchema = z.object({ access_token: z.string().min(1) });
+const telegramIdentitySchema = z.object({
+  ok: z.literal(true),
+  result: z.object({ id: z.number().int(), username: z.string().min(1) }),
+});
 const DEFAULT_TIMEOUT_MS = 8_000;
 const DISCORD_API = "https://discord.com/api/v10";
 
@@ -42,6 +46,9 @@ export function createProviderApplicationVerifier(
       }
       if (configuration.provider === "discord") {
         return verifyDiscord(configuration, request, timeoutMs);
+      }
+      if (configuration.provider === "telegram") {
+        return verifyTelegram(configuration, request, timeoutMs);
       }
       // Slack client credentials have no honest verification endpoint. They are verified only
       // by the OAuth installation callback, where the returned bot token is tested.
@@ -103,6 +110,36 @@ async function verifyGitHub(
     id: String(parsed.data.id),
     name: parsed.data.name,
     ownerLogin: parsed.data.owner.login,
+  };
+}
+
+/** The bot token is the whole Telegram credential; `getMe` proves it and names the bot. */
+async function verifyTelegram(
+  configuration: Extract<ProviderApplicationConfiguration, { provider: "telegram" }>,
+  request: typeof fetch,
+  timeoutMs: number,
+): Promise<ProviderApplicationIdentity> {
+  if (!/^\d+:[A-Za-z0-9_-]+$/u.test(configuration.botToken)) {
+    throw new ProviderVerificationError("credentialsRejected", undefined, { subject: "botToken" });
+  }
+  const response = await fixedRequest(
+    request,
+    `https://api.telegram.org/bot${configuration.botToken}/getMe`,
+    {},
+    timeoutMs,
+  );
+  if (response.status === 401 || response.status === 404) {
+    throw new ProviderVerificationError("credentialsRejected", response.status, {
+      subject: "botToken",
+    });
+  }
+  rejectFailedResponse(response);
+  const parsed = telegramIdentitySchema.safeParse(await safeJson(response));
+  if (!parsed.success) throw new ProviderVerificationError("invalidResponse", response.status);
+  return {
+    provider: "telegram",
+    id: String(parsed.data.result.id),
+    name: `@${parsed.data.result.username}`,
   };
 }
 

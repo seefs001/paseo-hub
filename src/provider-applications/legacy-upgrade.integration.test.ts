@@ -109,7 +109,7 @@ describe("pre-provider-app connection upgrade", () => {
         });
 
         assert.deepEqual(failures, []);
-        assert.deepEqual(runtime.published, ["github", "slack", "discord", "linear"]);
+        assert.deepEqual(runtime.published, ["github", "slack", "discord", "linear", "telegram"]);
         for (const provider of ["github", "slack", "discord"] as const) {
           assert.deepEqual(
             (await inventory.connectedIdentities(provider)).map(
@@ -174,6 +174,7 @@ const ENVIRONMENT_APPLICATIONS = {
     clientSecret: "linear-secret",
     webhookSecret: "linear-webhook-secret",
   },
+  telegram: { provider: "telegram", botToken: "100:telegram-token" },
 } satisfies Record<Provider, ProviderApplicationConfiguration>;
 
 async function legacyDatabase(engine: "PGlite" | "PostgreSQL"): Promise<{
@@ -327,6 +328,9 @@ function identity(configuration: ProviderApplicationConfiguration): ProviderAppl
   }
   if (configuration.provider === "linear") {
     return { provider: "linear", id: configuration.clientId, name: "Linear app" };
+  }
+  if (configuration.provider === "telegram") {
+    return { provider: "telegram", id: "100", name: "@telegram_bot" };
   }
   return { provider: "discord", id: configuration.applicationId, name: "Discord app" };
 }

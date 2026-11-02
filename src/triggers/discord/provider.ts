@@ -66,6 +66,13 @@ export interface DiscordMergeData {
     event_type: NormalizedDiscordMessageEvent["type"];
     /** The reaction that started the run, for `discord.reaction_added`. */
     reaction?: { emoji: string; user: { id: string; username: string } };
+    /** The button clicked, for `discord.choice_selected`. */
+    choice?: {
+      label: string;
+      index: number;
+      question_message: { id: string };
+      user: { id: string; username: string };
+    };
     connection_id: string | null;
     guild: { id: string };
     trigger_message: DiscordMergeMessage & {
@@ -98,6 +105,7 @@ export const DISCORD_EVENT_SOURCES = [
   "discord.mention",
   "discord.thread_message",
   "discord.reaction_added",
+  "discord.choice_selected",
 ] as const;
 
 export function createDiscordTriggerProvider(options: {
@@ -118,16 +126,15 @@ export function createDiscordTriggerProvider(options: {
     eventNames: DISCORD_EVENT_SOURCES,
     async match(externalTrigger) {
       const event = NormalizedDiscordMessageEventSchema.parse(externalTrigger.payload);
+      if (event.choice !== undefined && event.choice.projectId !== externalTrigger.projectId) {
+        return "trigger_filters_rejected";
+      }
       const stored = await options
         .configurationStoreForProject(externalTrigger.projectId)
         .getRevision(externalTrigger.configurationRevisionId);
       if (stored === undefined) return "configuration_unavailable";
       if (!discordEventHasTrigger(stored.configuration, event)) return "no_trigger_for_source";
-      const conversationKey = JSON.stringify([
-        "discord",
-        event.guildId,
-        event.threadId ?? event.messageId,
-      ]);
+      const conversationKey = event.choice?.conversationKey ?? discordConversationKey(event);
       // A thread message only continues: where this project has no conversation in the thread,
       // nobody asked for a run, and starting one would answer chatter the bot was not part of.
       if (
@@ -198,7 +205,9 @@ export function createDiscordTriggerProvider(options: {
 
       if (matches.length === 0) return "trigger_filters_rejected";
       // The project has one conversation in the thread, so one follow-up is one run.
-      return event.type === "thread_message" ? matches.slice(0, 1) : matches;
+      return event.type === "thread_message" || event.type === "choice"
+        ? matches.slice(0, 1)
+        : matches;
     },
     async materializeContext(launch) {
       const event = launch.triggerContext.event.discord;
@@ -348,6 +357,12 @@ function discordReactionPhase(
   return phase === "accepted" || phase === "started" ? phase : undefined;
 }
 
+export function discordConversationKey(
+  target: Pick<DiscordOutputContext, "guildId" | "threadId" | "messageId">,
+): string {
+  return JSON.stringify(["discord", target.guildId, target.threadId ?? target.messageId]);
+}
+
 function buildDiscordMergeData(
   event: NormalizedDiscordMessageEvent,
   botClientId: string,
@@ -363,6 +378,16 @@ function buildDiscordMergeData(
             reaction: {
               emoji: event.reaction.emoji,
               user: { id: actor.id, username: actor.username },
+            },
+          }),
+      ...(event.choice === undefined
+        ? {}
+        : {
+            choice: {
+              label: event.choice.label,
+              index: event.choice.index,
+              question_message: { id: event.messageId },
+              user: event.choice.user,
             },
           }),
       connection_id: connectionId ?? null,

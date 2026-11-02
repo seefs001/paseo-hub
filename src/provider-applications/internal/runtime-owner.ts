@@ -18,6 +18,8 @@ import type {
   TriggerProviderResources,
 } from "../../providers/registration.js";
 import { createSlackRegistration } from "../../providers/slack/index.js";
+import { createTelegramRegistration } from "../../providers/telegram/index.js";
+import { TELEGRAM_EVENT_SOURCES } from "../../triggers/telegram/provider.js";
 import type { TriggerHandler, TriggerProvider, TriggerSource } from "../../triggers/index.js";
 import type {
   Provider,
@@ -90,13 +92,14 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
     ["slack", emptySlot()],
     ["discord", emptySlot()],
     ["linear", emptySlot()],
+    ["telegram", emptySlot()],
   ]);
   private readonly stable = new Map<Provider, ProviderRegistration>();
   private slackInstallationHandler: SlackInstallationHandler | undefined;
   private linearInstallationHandler: LinearInstallationHandler | undefined;
 
   constructor(private readonly options: DynamicProviderRuntimeOptions) {
-    for (const provider of ["github", "slack", "discord", "linear"] as const) {
+    for (const provider of ["github", "slack", "discord", "linear", "telegram"] as const) {
       this.stable.set(provider, this.stableRegistration(provider));
     }
   }
@@ -107,6 +110,7 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
       this.stable.get("discord")!,
       this.stable.get("slack")!,
       this.stable.get("linear")!,
+      this.stable.get("telegram")!,
     ];
   }
 
@@ -235,10 +239,11 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
       configurationVersion,
       ...(this.options.fetch === undefined ? {} : { fetch: this.options.fetch }),
     };
-    if (provider === "github" && configuration.provider === "github") {
+    if (provider !== configuration.provider) throw new Error("provider configuration mismatch");
+    if (configuration.provider === "github") {
       return createGitHubRegistration({ ...shared, configuration });
     }
-    if (provider === "slack" && configuration.provider === "slack") {
+    if (configuration.provider === "slack") {
       return createSlackRegistration({
         ...shared,
         configuration,
@@ -249,7 +254,7 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
         onVerifiedInstallation: (input) => this.handleSlackInstallation(input),
       });
     }
-    if (provider === "discord" && configuration.provider === "discord") {
+    if (configuration.provider === "discord") {
       return createDiscordRegistration({
         ...shared,
         configuration: {
@@ -259,7 +264,10 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
         },
       });
     }
-    if (provider === "linear" && configuration.provider === "linear") {
+    if (configuration.provider === "telegram") {
+      return createTelegramRegistration({ ...shared, configuration });
+    }
+    if (configuration.provider === "linear") {
       return createLinearRegistration({
         ...shared,
         configuration,
@@ -408,6 +416,7 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
         {
           type: `${provider}.reply`,
           tool: replyToolFor(provider),
+          choices: provider === "discord" || provider === "telegram",
           available: (context) => {
             const output = slot.active?.registration.outputs.find(
               (candidate) => candidate.type === `${provider}.reply`,
@@ -453,7 +462,7 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
             },
           }
         : {}),
-      ...(provider === "slack" || provider === "discord"
+      ...(provider === "slack" || provider === "discord" || provider === "telegram"
         ? {
             attachment: {
               provider,
@@ -630,6 +639,7 @@ function emptySlot(): Slot {
 
 function actionNames(provider: Provider): readonly string[] {
   if (provider === "github") return ["start", "disconnect", "setup", "callback"];
+  if (provider === "telegram") return ["start", "disconnect"];
   return ["start", "disconnect", "callback"];
 }
 
@@ -637,6 +647,7 @@ function eventNames(provider: Provider): TriggerProvider["eventNames"] {
   if (provider === "slack") return ["slack.mention"];
   if (provider === "discord") return DISCORD_EVENT_SOURCES;
   if (provider === "linear") return ["linear.issue", "linear.comment"];
+  if (provider === "telegram") return TELEGRAM_EVENT_SOURCES;
   return GITHUB_TRIGGER_SOURCE_NAMES;
 }
 
@@ -692,6 +703,6 @@ async function retire(provider: Provider, active: ActiveRegistration): Promise<v
 
 function replyToolFor(provider: Provider): OutputToolDefinition {
   if (provider === "discord") return discordReplyOutputTool;
-  if (provider === "linear") return replyWithFilesOutputTool;
+  if (provider === "linear" || provider === "telegram") return replyWithFilesOutputTool;
   return replyOutputTool;
 }

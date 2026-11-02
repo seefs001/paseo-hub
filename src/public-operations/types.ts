@@ -45,6 +45,7 @@ export interface ConfigurationResources {
   discord: readonly { slug: string; guildName: string }[];
   slack: readonly { slug: string; teamName: string }[];
   linear: readonly { slug: string; organizationName: string }[];
+  telegram: readonly { slug: string; chatTitle: string }[];
 }
 
 export type ListConfigurationResourcesResult =

@@ -1,5 +1,7 @@
 import {
+  ButtonStyle,
   Client,
+  ComponentType,
   DiscordAPIError,
   GatewayIntentBits,
   Partials,
@@ -74,7 +76,45 @@ export interface DiscordConversationReplyInput extends DiscordPostInput {
   /** Name for the thread this reply opens; ignored when the message already has a thread. */
   threadTitle?: string;
   files?: readonly { name: string; bytes: Buffer }[];
+  /** Buttons under the reply, one row; each click arrives through `onButtonClick`. */
+  buttons?: readonly DiscordButton[];
 }
+
+export interface DiscordButton {
+  label: string;
+  customId: string;
+  style?: "primary" | "success" | "danger";
+}
+
+/** Where a reply landed: the thread or channel, and the message itself. */
+export interface DiscordSentMessage {
+  channelId: string;
+  messageId: string;
+}
+
+export interface DiscordButtonClick {
+  customId: string;
+  guildId: string;
+  channelId: string;
+  /** The parent channel, when the button sits in a thread. */
+  parentChannelId: string | null;
+  threadId: string | null;
+  messageId: string;
+  user: { id: string; username: string; bot: boolean };
+}
+
+/**
+ * What a click handler wants shown. `notice` goes to the clicker alone; `resolved` replaces the
+ * buttons for everyone.
+ */
+export interface DiscordButtonClickResult {
+  notice?: string;
+  resolved?: string;
+}
+
+export type DiscordButtonClickHandler = (
+  click: DiscordButtonClick,
+) => Promise<DiscordButtonClickResult>;
 
 export const DISCORD_THREAD_NAME_MAX_LENGTH = 100;
 
@@ -85,7 +125,7 @@ export interface DiscordBotClient {
   createReaction(input: DiscordReactionInput): Promise<void>;
   deleteOwnReaction(input: DiscordReactionInput): Promise<void>;
   sendChannelMessage(input: DiscordPostInput): Promise<void>;
-  sendConversationReply(input: DiscordConversationReplyInput): Promise<void>;
+  sendConversationReply(input: DiscordConversationReplyInput): Promise<DiscordSentMessage | void>;
   readMessage(input: {
     channelId: string;
     messageId: string;
@@ -98,6 +138,8 @@ export interface DiscordBotClient {
   /** Reactions added in a server, with the reacted message and the reacting user fetched. */
   onReactionAdd?(handler: DiscordReactionAddHandler): () => void;
   onGuildDelete(handler: DiscordGuildDeleteHandler): () => void;
+  /** Button clicks on the bot's messages. One handler answers each click. */
+  onButtonClick?(handler: DiscordButtonClickHandler): () => void;
 }
 
 export type DiscordRawMessageHandler = (message: Message) => Promise<void>;
@@ -143,6 +185,7 @@ export function createDiscordBotClient(options: CreateDiscordBotClientOptions): 
   const handlers = new Set<DiscordRawMessageHandler>();
   const reactionHandlers = new Set<DiscordReactionAddHandler>();
   const guildDeleteHandlers = new Set<DiscordGuildDeleteHandler>();
+  let buttonClickHandler: DiscordButtonClickHandler | undefined;
   const pendingReplyDestinations = new Map<string, Promise<DiscordSendableChannel>>();
   let started = false;
 
@@ -192,6 +235,61 @@ export function createDiscordBotClient(options: CreateDiscordBotClientOptions): 
             channelId: partialReaction.message.channelId,
             messageId: partialReaction.message.id,
           },
+        },
+      );
+    });
+  });
+  client.on("interactionCreate", (interaction) => {
+    if (!interaction.isButton() || interaction.guildId === null) return;
+    const handler = buttonClickHandler;
+    if (handler === undefined) return;
+    void (async () => {
+      // Discord voids the interaction unless it is answered within three seconds.
+      await interaction.deferUpdate();
+      const channel = interaction.channel;
+      const isThread =
+        channel !== null && typeof channel.isThread === "function" && channel.isThread();
+      const result = await handler({
+        customId: interaction.customId,
+        guildId: DiscordSnowflakeSchema.parse(interaction.guildId),
+        channelId: DiscordSnowflakeSchema.parse(interaction.channelId),
+        parentChannelId: isThread ? (channel.parentId ?? null) : null,
+        threadId: isThread ? interaction.channelId : null,
+        messageId: DiscordSnowflakeSchema.parse(interaction.message.id),
+        user: {
+          id: interaction.user.id,
+          username: interaction.user.username,
+          bot: interaction.user.bot,
+        },
+      });
+      if (result.resolved !== undefined) {
+        await interaction.editReply({
+          components: [
+            {
+              type: ComponentType.ActionRow,
+              components: [
+                {
+                  type: ComponentType.Button,
+                  style: ButtonStyle.Secondary,
+                  label: result.resolved.slice(0, 80),
+                  customId: interaction.customId,
+                  disabled: true,
+                },
+              ],
+            },
+          ],
+        });
+      }
+      if (result.notice !== undefined) {
+        await interaction.followUp({ content: result.notice, ephemeral: true });
+      }
+    })().catch((error: unknown) => {
+      reportFailure(
+        error,
+        { operation: "discord.button.handoff", component: "triggers", provider: "discord" },
+        {
+          scrubValues: [options.token],
+          diagnostic: { channelId: interaction.channelId, messageId: interaction.message.id },
         },
       );
     });
@@ -278,13 +376,17 @@ export function createDiscordBotClient(options: CreateDiscordBotClientOptions): 
         input.threadId === undefined || input.threadId === null
           ? await resolveReplyDestination(client, input, pendingReplyDestinations)
           : await fetchSendableChannel(client, input.threadId);
-      await channel.send({
+      const sent = await channel.send({
         content: input.content,
         allowedMentions: { parse: [] },
         ...(input.files === undefined || input.files.length === 0
           ? {}
           : { files: input.files.map((file) => ({ attachment: file.bytes, name: file.name })) }),
+        ...(input.buttons === undefined || input.buttons.length === 0
+          ? {}
+          : { components: [buttonRow(input.buttons)] }),
       });
+      return sentMessage(sent);
     },
     async readMessage(input) {
       const message = await fetchMessage(
@@ -329,7 +431,40 @@ export function createDiscordBotClient(options: CreateDiscordBotClientOptions): 
       guildDeleteHandlers.add(handler);
       return () => guildDeleteHandlers.delete(handler);
     },
+    onButtonClick(handler) {
+      buttonClickHandler = handler;
+      return () => {
+        if (buttonClickHandler === handler) buttonClickHandler = undefined;
+      };
+    },
   };
+}
+
+const BUTTON_STYLES = {
+  primary: ButtonStyle.Primary,
+  success: ButtonStyle.Success,
+  danger: ButtonStyle.Danger,
+} as const;
+
+function buttonRow(buttons: readonly DiscordButton[]) {
+  return {
+    type: ComponentType.ActionRow as const,
+    components: buttons.map((button) => ({
+      type: ComponentType.Button as const,
+      style: BUTTON_STYLES[button.style ?? "primary"],
+      label: button.label,
+      customId: button.customId,
+    })),
+  };
+}
+
+function sentMessage(sent: unknown): DiscordSentMessage | undefined {
+  if (typeof sent !== "object" || sent === null) return undefined;
+  const messageId: unknown = Reflect.get(sent, "id");
+  const channelId: unknown = Reflect.get(sent, "channelId");
+  return typeof messageId === "string" && typeof channelId === "string"
+    ? { channelId, messageId }
+    : undefined;
 }
 
 async function ignoreDeletedMessage(operation: () => Promise<void>): Promise<void> {

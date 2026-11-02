@@ -26,6 +26,11 @@ const discordStatusSchema = z.discriminatedUnion("status", [
     status: z.literal("connected"),
   }),
 ]);
+const telegramStatusSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("notConfigured") }),
+  z.object({ status: z.literal("disconnected") }),
+  z.object({ status: z.literal("connected") }),
+]);
 const slackStatusSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("notConfigured") }),
   z.object({ status: z.literal("disconnected") }),
@@ -46,6 +51,8 @@ export const connectionStatusSchema = z.object({
   discord: discordStatusSchema,
   slack: slackStatusSchema,
   linear: linearStatusSchema,
+  // Absent where a Hub composes no Telegram registration.
+  telegram: telegramStatusSchema.default({ status: "notConfigured" }),
 });
 const scopeSchema = z.object({
   organizationSlug: z.string().min(1),
@@ -157,6 +164,7 @@ const CONNECTION_OPERATIONS = {
   discord: { start: "discordStart", disconnect: "discordDisconnect" },
   slack: { start: "slackStart", disconnect: "slackDisconnect" },
   linear: { start: "linearStart", disconnect: "linearDisconnect" },
+  telegram: { start: "telegramStart", disconnect: "telegramDisconnect" },
 } as const;
 
 function connectionContext(

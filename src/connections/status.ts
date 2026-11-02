@@ -8,6 +8,7 @@ const PROVIDER_NAMES = {
   discord: "Discord",
   slack: "Slack",
   linear: "Linear",
+  telegram: "Telegram",
 } as const;
 
 export function connectionsQueryKey(accountId: string, organizationId: string) {

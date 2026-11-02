@@ -49,6 +49,7 @@ export function compileTriggerDocument(yaml: string): CompiledTriggerDocument {
     const grant: NonNullable<AuthoredStep["allow_outputs"]>[number] = { type };
     if (output.max !== undefined) grant.max = output.max;
     if (output.required !== undefined) grant.required = output.required;
+    if (output.choices !== undefined) grant.choices = output.choices;
     allowOutputs.push(grant);
   }
   const triggers: AuthoredTrigger[] = [];
@@ -139,7 +140,8 @@ function automaticReplyType(event: string): string | undefined {
   return provider === "slack" ||
     provider === "discord" ||
     provider === "linear" ||
-    provider === "github"
+    provider === "github" ||
+    provider === "telegram"
     ? `${provider}.reply`
     : undefined;
 }

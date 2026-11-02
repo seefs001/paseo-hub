@@ -2,6 +2,7 @@ import type {
   CompiledTriggerConfig as CompiledTrigger,
   TriggerFilter,
 } from "../../config/index.js";
+import { choiceBelongsToTrigger } from "../../conversation-choices/index.js";
 import type { NormalizedDiscordMessageEvent } from "./events.js";
 
 type MatchedTriggerDefinition = Pick<CompiledTrigger, "name" | "on" | "filters">;
@@ -47,6 +48,14 @@ function acceptsEvent(
 ): boolean {
   if (event.type === "mention") return trigger.on === MENTION_EVENT;
   if (event.type === "reaction") return trigger.on === REACTION_EVENT;
+  // A choice continues the conversation of the trigger whose reply carried the buttons.
+  if (event.type === "choice") {
+    return (
+      event.choice !== undefined &&
+      trigger.on.startsWith("discord.") &&
+      choiceBelongsToTrigger(trigger.name, event.choice)
+    );
+  }
   return (
     (trigger.on === MENTION_EVENT || trigger.on === REACTION_EVENT) &&
     trigger.filters?.thread_messages === true

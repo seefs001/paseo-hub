@@ -92,6 +92,7 @@ test("only Discord has no inbound events to wait for", () => {
       ["slack", true],
       ["discord", false],
       ["linear", true],
+      ["telegram", true],
     ],
   );
 });
@@ -291,7 +292,13 @@ test("every field the boundary needs is asked for, in the portal's own words", (
 test("each provider names the panel the operator pastes into after that provider", () => {
   assert.deepEqual(
     PROVIDER_GUIDES.map((guide) => guide.formTitle),
-    ["Paste from GitHub", "Connect Slack", "Paste from Discord", "Paste from Linear"],
+    [
+      "Paste from GitHub",
+      "Connect Slack",
+      "Paste from Discord",
+      "Paste from Linear",
+      "Paste from @BotFather",
+    ],
   );
 });
 

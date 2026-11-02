@@ -9,7 +9,9 @@ export async function readProviderApplicationEnvironment(
   const slack = slackEnvironment(environment);
   const discord = discordEnvironment(environment);
   const linear = linearEnvironment(environment);
+  const botToken = nonEmpty(environment["TELEGRAM_BOT_TOKEN"]);
   return {
+    ...(botToken === undefined ? {} : { telegram: { provider: "telegram", botToken } }),
     ...(github === undefined ? {} : { github }),
     ...(slack === undefined ? {} : { slack }),
     ...(discord === undefined ? {} : { discord }),

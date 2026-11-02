@@ -56,6 +56,8 @@ export interface ProviderOutputRegistration {
   type: string;
   tool: OutputToolDefinition;
   available?: (outputContext: unknown) => boolean;
+  /** The provider can attach choice buttons to this output. */
+  choices?: boolean;
   execute: OutputExecutor;
 }
 

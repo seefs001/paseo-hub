@@ -6,6 +6,7 @@ import type { Logger } from "pino";
 import type { RuntimeConfig } from "./config/index.js";
 import { createDatabase } from "./db/pg.js";
 import { ReceiptRetention } from "./receipt-retention/index.js";
+import { TelegramTranscriptRetention } from "./triggers/telegram/retention.js";
 import type { Database } from "./db/types.js";
 import {
   embeddedDatabaseRuntime,
@@ -182,6 +183,9 @@ async function createProductionRuntime(): Promise<ApplicationRuntime> {
     const receiptRetention = new ReceiptRetention(runtime);
     resources.own(() => receiptRetention.stop());
     receiptRetention.start();
+    const transcriptRetention = new TelegramTranscriptRetention(runtime);
+    resources.own(() => transcriptRetention.stop());
+    transcriptRetention.start();
     return application;
   } catch (error) {
     await resources.close();

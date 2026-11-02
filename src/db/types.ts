@@ -14,7 +14,7 @@ export type WorkflowDeadlineKind = "step_hard" | "step_idle" | "whole_run";
 export interface ProviderEventReceiptRecord {
   id: string;
   organizationId: string;
-  provider: "github" | "slack" | "discord" | "linear" | "manual" | "schedule";
+  provider: "github" | "slack" | "discord" | "linear" | "telegram" | "manual" | "schedule";
   connectionId: string | null;
   resourceId: string | null;
   deliveryId: string;
@@ -69,7 +69,7 @@ export interface ProviderEventRouteSnapshot {
   resourceId: string | null;
 }
 
-export type AttachmentProvider = "slack" | "discord";
+export type AttachmentProvider = "slack" | "discord" | "telegram";
 
 export interface AttachmentRecord {
   id: string;
@@ -281,6 +281,8 @@ export interface OrganizationConnectionUsage {
   discord: DiscordConnectionRecord[];
   slack: SlackConnectionRecord[];
   linear: LinearConnectionRecord[];
+  /** Absent means none. */
+  telegram?: TelegramConnectionRecord[];
 }
 
 export interface GitHubRepositoryRecord {
@@ -375,14 +377,15 @@ export interface PendingProjectTriggerMigration {
   revision: ProjectConfigurationRevisionRecord;
 }
 
-export type ConnectionProvider = "github" | "discord" | "slack" | "linear";
+export type ConnectionProvider = "github" | "discord" | "slack" | "linear" | "telegram";
 
 export type ConnectionAttemptPhase =
   | "github_setup"
   | "github_user_authorization"
   | "discord_authorization"
   | "slack_authorization"
-  | "linear_authorization";
+  | "linear_authorization"
+  | "telegram_authorization";
 
 export interface ConnectionAccountAccess {
   sessionId: string;
@@ -441,6 +444,16 @@ export interface DiscordConnectionRecord {
   slug: string;
   guildId: string;
   guildName: string;
+  providerApplicationId: string | null;
+}
+
+export interface TelegramConnectionRecord {
+  id: string;
+  organizationId: string;
+  slug: string;
+  chatId: string;
+  chatType: "private" | "group" | "supergroup";
+  chatTitle: string;
   providerApplicationId: string | null;
 }
 
@@ -516,6 +529,81 @@ export interface BindDiscordConnectionInput extends ReadConnectionAttemptInput {
   guildName: string;
 }
 
+/**
+ * A Telegram chat is bound by the bot, which receives the attempt state in `/start`; no browser
+ * session is present, so the attempt is read by its state alone.
+ */
+export interface BindTelegramConnectionInput {
+  stateVerifier: string;
+  providerApplicationId: string;
+  chatId: string;
+  chatType: TelegramConnectionRecord["chatType"];
+  chatTitle: string;
+}
+
+export interface BoundTelegramConnection {
+  connection: TelegramConnectionRecord;
+  organizationName: string;
+}
+
+export interface TelegramMessageRecord {
+  connectionId: string;
+  chatId: string;
+  messageId: number;
+  conversationId: string;
+  topicId: number | null;
+  replyToMessageId: number | null;
+  authorId: string;
+  authorUsername: string;
+  fromBot: boolean;
+  text: string;
+  attachments: TelegramAttachmentRecord[];
+  createdAt: Date;
+}
+
+/** A file on a Telegram message. The file id is resolved at download time; it is not a link. */
+export interface TelegramAttachmentRecord {
+  fileId: string;
+  fileUniqueId: string;
+  filename: string;
+  contentType: string | null;
+  size: number | null;
+}
+
+export interface ConversationChoiceOption {
+  label: string;
+  style?: "primary" | "success" | "danger";
+}
+
+export interface ConversationChoiceRecord {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  provider: "discord" | "telegram";
+  connectionId: string;
+  triggerName: string;
+  conversationKey: string;
+  agentExecutionId: string;
+  messageLocator: JsonValue;
+  origin: JsonValue;
+  options: ConversationChoiceOption[];
+  resolvedIndex: number | null;
+  resolvedByUserId: string | null;
+  resolvedByName: string | null;
+  resolvedAt: Date | null;
+  expiresAt: Date;
+}
+
+export type InsertConversationChoiceInput = Omit<
+  ConversationChoiceRecord,
+  "id" | "resolvedIndex" | "resolvedByUserId" | "resolvedByName" | "resolvedAt" | "messageLocator"
+>;
+
+export type ResolveConversationChoiceResult =
+  | { status: "resolved"; choice: ConversationChoiceRecord }
+  | { status: "alreadyResolved"; choice: ConversationChoiceRecord }
+  | { status: "unavailable" };
+
 export interface BindSlackConnectionInput extends ReadConnectionAttemptInput {
   providerApplicationId: string;
   teamId: string;
@@ -572,6 +660,7 @@ export type LinearConnectionRefreshOperation<T> = (
 export type DisconnectConnectionResult =
   | { provider: "github" }
   | { provider: "discord"; guildId: string | undefined }
+  | { provider: "telegram"; chatId: string | undefined }
   | {
       provider: "slack";
       teamId: string | undefined;
@@ -647,6 +736,10 @@ export interface AcceptGitHubEventInput extends ProviderEventEvidence {
 
 export interface AcceptDiscordEventInput extends ProviderEventEvidence {
   guildId: string;
+}
+
+export interface AcceptTelegramEventInput extends ProviderEventEvidence {
+  chatId: string;
 }
 
 export interface AcceptSlackEventInput extends ProviderEventEvidence {
@@ -1304,6 +1397,7 @@ export interface Database {
   ): Promise<void>;
   acceptGitHubEvent(input: AcceptGitHubEventInput): Promise<ProviderEventAcceptance>;
   acceptDiscordEvent(input: AcceptDiscordEventInput): Promise<ProviderEventAcceptance>;
+  acceptTelegramEvent(input: AcceptTelegramEventInput): Promise<ProviderEventAcceptance>;
   acceptSlackEvent(input: AcceptSlackEventInput): Promise<ProviderEventAcceptance>;
   acceptLinearEvent(input: AcceptLinearEventInput): Promise<ProviderEventAcceptance>;
   persistManualEvent(input: PersistManualEventInput): Promise<ManualEventPersistence>;
@@ -1668,5 +1762,34 @@ export interface Database {
     guildId: string,
   ): Promise<DiscordConnectionRecord | undefined>;
   removeDiscordConnection(guildId: string): Promise<void>;
+  bindTelegramConnection(input: BindTelegramConnectionInput): Promise<BoundTelegramConnection>;
+  findTelegramConnection(chatId: string): Promise<TelegramConnectionRecord | undefined>;
+  removeTelegramConnection(chatId: string): Promise<void>;
+  /** Telegram gives a group a new id when it becomes a supergroup; the connection follows it. */
+  moveTelegramConnection(fromChatId: string, toChatId: string): Promise<void>;
+  /** Keeps the first copy of each message; a message is never rewritten. */
+  recordTelegramMessages(messages: readonly TelegramMessageRecord[]): Promise<void>;
+  findTelegramMessage(
+    chatId: string,
+    messageId: number,
+  ): Promise<TelegramMessageRecord | undefined>;
+  /** Oldest first, the conversation's messages before `beforeMessageId`, at most `limit`. */
+  listTelegramConversation(input: {
+    chatId: string;
+    conversationId: string;
+    beforeMessageId: number;
+    limit: number;
+  }): Promise<TelegramMessageRecord[]>;
+  insertConversationChoice(input: InsertConversationChoiceInput): Promise<ConversationChoiceRecord>;
+  setConversationChoiceMessage(id: string, messageLocator: JsonValue): Promise<void>;
+  findConversationChoice(id: string): Promise<ConversationChoiceRecord | undefined>;
+  /** The first click on an unexpired, unresolved set wins; every later click sees it resolved. */
+  resolveConversationChoice(input: {
+    id: string;
+    index: number;
+    userId: string;
+    userName: string;
+    now: Date;
+  }): Promise<ResolveConversationChoiceResult>;
   close(): Promise<void>;
 }

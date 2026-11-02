@@ -104,7 +104,8 @@ export async function cancelledConnectionResult(input: {
   auth: AuthServer;
   database: Database;
   request: Request;
-  provider: ConnectionProvider;
+  /** Telegram has no authorization page to cancel at. */
+  provider: Exclude<ConnectionProvider, "telegram">;
   phase:
     | "github_user_authorization"
     | "discord_authorization"

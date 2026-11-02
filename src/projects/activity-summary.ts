@@ -12,13 +12,14 @@ import {
 import { NormalizedDiscordMessageEventSchema } from "../triggers/discord/events.js";
 import { NormalizedSlackMentionEventSchema } from "../triggers/slack/events.js";
 import { NormalizedLinearEventSchema } from "../triggers/linear/events.js";
+import { NormalizedTelegramEventSchema } from "../triggers/telegram/events.js";
 import {
   classifyGitHubEvent,
   type GitHubSemanticEvent,
 } from "../triggers/github/classification.js";
 
 export interface TriggerSummary {
-  provider: "github" | "slack" | "discord" | "linear" | "manual" | "schedule";
+  provider: "github" | "slack" | "discord" | "linear" | "telegram" | "manual" | "schedule";
   headline: string;
   actor: string | null;
   externalUrl: string | null;
@@ -39,6 +40,7 @@ export function summarizeTrigger(source: string, payload: unknown): TriggerSumma
   if (provider === "slack") return summarizeSlack(payload);
   if (provider === "discord") return summarizeDiscord(payload);
   if (provider === "linear") return summarizeLinear(payload);
+  if (provider === "telegram") return summarizeTelegram(payload);
   if (provider === "schedule") {
     return { provider, headline: "Scheduled run", actor: null, externalUrl: null };
   }
@@ -183,6 +185,30 @@ function summarizeDiscord(payload: unknown): TriggerSummary {
     actor: event.data.author.username,
     externalUrl: `https://discord.com/channels/${event.data.guildId}/${event.data.channelId}/${event.data.messageId}`,
   };
+}
+
+function summarizeTelegram(payload: unknown): TriggerSummary {
+  const event = NormalizedTelegramEventSchema.safeParse(payload);
+  if (!event.success) {
+    return { provider: "telegram", headline: "Telegram message", actor: null, externalUrl: null };
+  }
+  const text = (event.data.choice?.label ?? event.data.text).trim();
+  return {
+    provider: "telegram",
+    headline: text.length > 0 ? truncate(text, 96) : "Telegram message",
+    actor:
+      event.data.choice?.user.username ??
+      event.data.reaction?.user.username ??
+      event.data.author.username,
+    externalUrl: telegramMessageUrl(event.data.chatId, event.data.messageId),
+  };
+}
+
+/** Supergroup messages have public `t.me/c/` links; other chats have none. */
+function telegramMessageUrl(chatId: string, messageId: number): string | null {
+  return chatId.startsWith("-100")
+    ? `https://t.me/c/${chatId.slice(4)}/${String(messageId)}`
+    : null;
 }
 
 function summarizeLinear(payload: unknown): TriggerSummary {

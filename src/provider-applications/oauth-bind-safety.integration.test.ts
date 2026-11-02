@@ -418,6 +418,9 @@ function identity(configuration: ProviderApplicationConfiguration): ProviderAppl
   if (configuration.provider === "linear") {
     return { provider: "linear", id: configuration.clientId, name: configuration.clientId };
   }
+  if (configuration.provider === "telegram") {
+    return { provider: "telegram", id: "100", name: "@telegram_bot" };
+  }
   return {
     provider: "discord",
     id: configuration.applicationId,

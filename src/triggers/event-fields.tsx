@@ -9,7 +9,11 @@ import { FormField } from "../components/app/form-field.js";
 import { useSnapshotQuery } from "../queries/index.js";
 import { eventDefinition, type QualifierKey } from "./configuration/events.js";
 import type { TriggerFieldErrors, TriggerFormValue } from "./configuration/editor.js";
-import { isDiscordFormEvent } from "./configuration/discord-filters.js";
+import {
+  hasChannelPicker,
+  isChatFormEvent,
+  isReactionEvent,
+} from "./configuration/chat-filters.js";
 import type { DiscordChannelSummary } from "../providers/discord/client.js";
 import { discordChannels } from "./functions.js";
 import { ScheduleFields } from "./schedule/fields.js";
@@ -38,12 +42,16 @@ export function EventFields({
         error={errors.recurrence}
         onChange={(recurrence) => onChange({ ...value, recurrence })}
       />
-      {value.event === "discord.reaction_added" ? (
+      {isReactionEvent(value.event) ? (
         <FormField
-          id="trigger-discord-emojis"
+          id="trigger-chat-emojis"
           name="emojis"
           label="Emojis"
-          description="Reactions that start a run, separated by spaces or commas: a Unicode emoji, or a custom emoji's name or ID. Reactions from bots, Hub's own included, are ignored."
+          description={
+            value.event.startsWith("telegram.")
+              ? "Reactions that start a run, separated by spaces or commas. Telegram sends reactions only to a bot that is a group administrator. Reactions from bots are ignored."
+              : "Reactions that start a run, separated by spaces or commas: a Unicode emoji, or a custom emoji's name or ID. Reactions from bots, Hub's own included, are ignored."
+          }
           kind="text"
           placeholder="🤖"
           value={value.emojis ?? ""}
@@ -55,28 +63,36 @@ export function EventFields({
           {...(errors.emojis === undefined ? {} : { error: errors.emojis })}
         />
       ) : null}
-      {isDiscordFormEvent(value.event) ? (
-        <>
-          <DiscordChannelField
-            organizationSlug={organizationSlug}
-            connection={value.connection}
-            channels={value.channels ?? EVERY_CHANNEL}
-            onChange={(channels) => {
-              const { channels: _previous, ...rest } = value;
-              onChange(channels.length === 0 ? rest : { ...rest, channels });
-            }}
-          />
-          <CheckboxField
-            id="trigger-discord-thread-messages"
-            label="Continue in threads without a mention"
-            description="In a thread this trigger's agent is working in, any message from an allowed user continues that agent. Elsewhere a message still has to mention the bot."
-            checked={value.threadMessages === true}
-            onChange={(checked) => {
-              const { threadMessages: _previous, ...rest } = value;
-              onChange(checked ? { ...rest, threadMessages: true } : rest);
-            }}
-          />
-        </>
+      {hasChannelPicker(value.event) ? (
+        <DiscordChannelField
+          organizationSlug={organizationSlug}
+          connection={value.connection}
+          channels={value.channels ?? EVERY_CHANNEL}
+          onChange={(channels) => {
+            const { channels: _previous, ...rest } = value;
+            onChange(channels.length === 0 ? rest : { ...rest, channels });
+          }}
+        />
+      ) : null}
+      {isChatFormEvent(value.event) ? (
+        <CheckboxField
+          id="trigger-chat-thread-messages"
+          label={
+            value.event.startsWith("telegram.")
+              ? "Continue in replies and topics without a mention"
+              : "Continue in threads without a mention"
+          }
+          description={
+            value.event.startsWith("telegram.")
+              ? "In a reply chain or topic this trigger's agent is working in, any message from an allowed user continues that agent. In a group, Telegram sends such messages only to an administrator bot or one with privacy mode off."
+              : "In a thread this trigger's agent is working in, any message from an allowed user continues that agent. Elsewhere a message still has to mention the bot."
+          }
+          checked={value.threadMessages === true}
+          onChange={(checked) => {
+            const { threadMessages: _previous, ...rest } = value;
+            onChange(checked ? { ...rest, threadMessages: true } : rest);
+          }}
+        />
       ) : null}
       {eventDefinition(value.event).qualifiers.map((qualifier) => {
         const error = errors[`qualifiers.${qualifier.key}`];

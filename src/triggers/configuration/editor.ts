@@ -10,15 +10,15 @@ import { z } from "zod";
 import { IDENTIFIER, TriggerDocumentSchema, type TriggerDocument } from "./schema.js";
 import { requiresExecutionMode } from "./unattended.js";
 import {
-  authoredDiscordFilters,
-  carriedDiscordFilters,
-  DISCORD_FILTER_KEYS,
-  discordFilterErrors,
-  discordYamlOnlyReason,
-  isDiscordFormEvent,
-  readDiscordFilters,
-  type DiscordFormFilters,
-} from "./discord-filters.js";
+  authoredChatFilters,
+  carriedChatFilters,
+  CHAT_FILTER_KEYS,
+  chatFilterErrors,
+  chatYamlOnlyReason,
+  isChatFormEvent,
+  readChatFilters,
+  type ChatFormFilters,
+} from "./chat-filters.js";
 
 import {
   eventDefinition,
@@ -28,7 +28,7 @@ import {
   type QualifierKey,
 } from "./events.js";
 
-export interface TriggerFormValue extends DiscordFormFilters {
+export interface TriggerFormValue extends ChatFormFilters {
   name: string;
   enabled: boolean;
   event: EditorEvent;
@@ -80,8 +80,8 @@ export function projectTriggerForm(yaml: string): TriggerFormProjection {
     return { status: "yaml_only", reason: "Agent choices can only be edited in YAML." };
   }
   const agent = trigger.run.agent;
-  const discordReason = discordYamlOnlyReason(event, definition.filters);
-  if (discordReason !== undefined) return { status: "yaml_only", reason: discordReason };
+  const chatReason = chatYamlOnlyReason(event, definition.filters);
+  if (chatReason !== undefined) return { status: "yaml_only", reason: chatReason };
   return {
     status: "editable",
     value: toFormValue(trigger, event, definition, agent),
@@ -101,7 +101,7 @@ function toFormValue(
     connection: definition.connection ?? "",
     allowedUsers: definition.filters?.from_users?.join(", ") ?? "*",
     qualifiers: readQualifiers(event, definition.filters),
-    ...readDiscordFilters(event, definition.filters),
+    ...readChatFilters(event, definition.filters),
     recurrence: definition.recurrence ?? DEFAULT_RECURRENCE,
     daemon: trigger.run.target.daemon,
     cwd: trigger.run.target.cwd,
@@ -166,10 +166,10 @@ export function patchTriggerYaml(yaml: string, value: TriggerFormValue): string 
   for (const key of ownedKeys) {
     setOptional(document, ["on", value.event, "filters", key], qualifiers[key]);
   }
-  if (isDiscordFormEvent(value.event) || isDiscordFormEvent(previousEvent)) {
-    const discord = authoredDiscordFilters(value.event, value);
-    for (const key of DISCORD_FILTER_KEYS) {
-      setOptional(document, ["on", value.event, "filters", key], discord[key]);
+  if (isChatFormEvent(value.event) || isChatFormEvent(previousEvent)) {
+    const chat = authoredChatFilters(value.event, value);
+    for (const key of CHAT_FILTER_KEYS) {
+      setOptional(document, ["on", value.event, "filters", key], chat[key]);
     }
   }
 
@@ -275,7 +275,7 @@ function formEventDefinition(value: TriggerFormValue): TriggerDocument["on"][str
     filters: {
       from_users: users(value.allowedUsers),
       ...authoredQualifiers(value),
-      ...authoredDiscordFilters(value.event, value),
+      ...authoredChatFilters(value.event, value),
     },
   };
 }
@@ -368,7 +368,7 @@ export function triggerFormErrors(value: TriggerFormValue): TriggerFieldErrors {
       errors.allowedUsers = "Name at least one user ID, or let everyone trigger it.";
     }
   }
-  Object.assign(errors, discordFilterErrors(value.event, value));
+  Object.assign(errors, chatFilterErrors(value.event, value));
   for (const qualifier of eventDefinition(value.event).qualifiers) {
     const selection = value.qualifiers[qualifier.key];
     if (qualifier.required && (selection === undefined || selection.trim().length === 0)) {
@@ -517,7 +517,7 @@ export function changeTriggerEvent(value: TriggerFormValue, event: EditorEvent):
     event,
     qualifiers,
     connection: sameProvider ? value.connection : "",
-    ...carriedDiscordFilters(value.event, event, value),
+    ...carriedChatFilters(value.event, event, value),
   };
 }
 

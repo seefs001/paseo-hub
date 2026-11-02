@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DiscordSnowflakeSchema } from "../../discord/snowflake.js";
+import { ChoiceSelectionSchema } from "../../conversation-choices/index.js";
 
 export const DiscordMessageAuthorSchema = z.object({
   id: DiscordSnowflakeSchema,
@@ -34,9 +35,10 @@ export const NormalizedDiscordContextMessageSchema = z.object({
 export const NormalizedDiscordMessageEventSchema = z.object({
   /**
    * `mention` names the bot; `thread_message` is an unmentioned message in a thread the bot
-   * started; `reaction` is a reaction added to the message, by `reaction.user`.
+   * started; `reaction` is a reaction added to the message, by `reaction.user`; `choice` is a
+   * click on a button an agent attached to a reply, by `author`.
    */
-  type: z.enum(["mention", "thread_message", "reaction"]),
+  type: z.enum(["mention", "thread_message", "reaction", "choice"]),
   id: DiscordSnowflakeSchema,
   guildId: DiscordSnowflakeSchema,
   channelId: DiscordSnowflakeSchema,
@@ -59,6 +61,7 @@ export const NormalizedDiscordMessageEventSchema = z.object({
       user: DiscordMessageAuthorSchema,
     })
     .optional(),
+  choice: ChoiceSelectionSchema.optional(),
 });
 
 export type DiscordMessageAuthor = z.infer<typeof DiscordMessageAuthorSchema>;

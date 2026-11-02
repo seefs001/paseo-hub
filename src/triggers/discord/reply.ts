@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  choiceButtonId,
+  readChoiceOptions,
+  type ConversationChoices,
+} from "../../conversation-choices/index.js";
 import { DiscordSnowflakeSchema } from "../../discord/snowflake.js";
 import {
   replyWithFilesOutputTool,
@@ -6,6 +11,7 @@ import {
   type OutputToolDefinition,
 } from "../../execution-capabilities/outputs.js";
 import { DISCORD_THREAD_NAME_MAX_LENGTH, type DiscordBotClient } from "./bot.js";
+import { discordConversationKey } from "./provider.js";
 
 const DiscordReplyArgsSchema = z.object({
   content: z.string().min(1),
@@ -31,6 +37,8 @@ export const discordReplyOutputTool: OutputToolDefinition = {
 };
 
 const DiscordReplyOutputContextSchema = z.object({
+  /** Needed only to key the conversation a choice continues. */
+  guildId: DiscordSnowflakeSchema.optional(),
   channelId: DiscordSnowflakeSchema,
   threadId: DiscordSnowflakeSchema.nullable().optional(),
   messageId: DiscordSnowflakeSchema,
@@ -38,6 +46,8 @@ const DiscordReplyOutputContextSchema = z.object({
 
 export interface CreateDiscordReplyExecutorOptions {
   bot: DiscordBotClient;
+  /** Records choice sets; without it a reply cannot carry buttons. */
+  choices?: ConversationChoices;
 }
 
 export function createDiscordReplyExecutor(
@@ -46,14 +56,47 @@ export function createDiscordReplyExecutor(
   return async function executeDiscordReply(input) {
     const args = DiscordReplyArgsSchema.parse(input.args);
     const context = DiscordReplyOutputContextSchema.parse(input.outputContext);
+    const choiceOptions = readChoiceOptions(input.args);
+    if (
+      choiceOptions !== undefined &&
+      (options.choices === undefined || context.guildId === undefined)
+    ) {
+      throw new Error("choices unavailable");
+    }
+    const choiceSet =
+      choiceOptions === undefined
+        ? undefined
+        : await options.choices!.create({
+            agentExecutionId: input.agentExecutionId,
+            provider: "discord",
+            // The reply opens the trigger message's thread, which shares the message's ID.
+            conversationKey: discordConversationKey({
+              guildId: context.guildId!,
+              threadId: context.threadId ?? null,
+              messageId: context.messageId,
+            }),
+            options: choiceOptions,
+          });
 
-    await options.bot.sendConversationReply({
+    const sent = await options.bot.sendConversationReply({
       channelId: context.channelId,
       threadId: context.threadId ?? null,
       messageId: context.messageId,
       content: args.content,
       ...(args.threadTitle === undefined ? {} : { threadTitle: args.threadTitle }),
       ...(input.files === undefined ? {} : { files: input.files }),
+      ...(choiceSet === undefined
+        ? {}
+        : {
+            buttons: choiceSet.options.map((option, index) => ({
+              label: option.label,
+              customId: choiceButtonId(choiceSet.id, index),
+              ...(option.style === undefined ? {} : { style: option.style }),
+            })),
+          }),
     });
+    if (choiceSet !== undefined && sent !== undefined) {
+      await options.choices!.attachMessage(choiceSet.id, { ...sent });
+    }
   };
 }

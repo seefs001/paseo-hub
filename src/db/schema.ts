@@ -17,6 +17,8 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import type { LaunchMachineIntent } from "../dispatcher/launch-machine-intent.js";
+import type { JsonValue } from "../config/compiler.js";
+import type { ConversationChoiceOption, TelegramAttachmentRecord } from "./types.js";
 import { INVITATION_ROLES, ORGANIZATION_ROLES } from "../auth/organization-contract.js";
 import { API_KEY_SCOPES } from "../auth/api-key-contract.js";
 
@@ -32,7 +34,7 @@ export type AgentExecutionStatus = (typeof AGENT_EXECUTION_STATUSES)[number];
 export const PROJECT_STATUSES = ["active", "archived"] as const;
 export const CONFIGURATION_SOURCE_KINDS = ["github", "manual"] as const;
 export const TRIGGER_FORMATS = ["single_run", "legacy_multistep"] as const;
-export const CONNECTION_PROVIDERS = ["github", "slack", "discord", "linear"] as const;
+export const CONNECTION_PROVIDERS = ["github", "slack", "discord", "linear", "telegram"] as const;
 
 export type MachineSource =
   | { kind: "manual"; userId?: string }
@@ -88,7 +90,7 @@ export const providerEventReceipts = pgTable(
     ),
     check(
       "provider_event_receipts_provider_check",
-      sql`${table.provider} in ('github', 'slack', 'discord', 'linear', 'manual', 'schedule')`,
+      sql`${table.provider} in ('github', 'slack', 'discord', 'linear', 'telegram', 'manual', 'schedule')`,
     ),
   ],
 );
@@ -102,7 +104,7 @@ export const attachmentCapabilities = pgTable(
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
     connectionId: uuid("connection_id").notNull(),
-    provider: text().$type<"slack" | "discord">().notNull(),
+    provider: text().$type<"slack" | "discord" | "telegram">().notNull(),
     sourceId: text("source_id").notNull(),
     locator: jsonb().notNull(),
     filename: text().notNull(),
@@ -117,7 +119,10 @@ export const attachmentCapabilities = pgTable(
       table.sourceId,
     ),
     index("attachment_capabilities_receipt_idx").on(table.providerEventReceiptId),
-    check("attachment_capabilities_provider_check", sql`${table.provider} in ('slack', 'discord')`),
+    check(
+      "attachment_capabilities_provider_check",
+      sql`${table.provider} in ('slack', 'discord', 'telegram')`,
+    ),
     foreignKey({
       columns: [table.providerEventReceiptId, table.organizationId],
       foreignColumns: [providerEventReceipts.id, providerEventReceipts.organizationId],
@@ -256,7 +261,7 @@ export const projectTriggerRoutes = pgTable(
     }).onDelete("cascade"),
     check(
       "project_trigger_routes_provider_check",
-      sql`${table.provider} in ('github', 'slack', 'discord', 'linear')`,
+      sql`${table.provider} in ('github', 'slack', 'discord', 'linear', 'telegram')`,
     ),
   ],
 );
@@ -861,7 +866,7 @@ export const organizationConnectionAttempts = pgTable(
   "organization_connection_attempts",
   {
     id: uuid().defaultRandom().primaryKey(),
-    provider: text().$type<"github" | "discord" | "slack" | "linear">().notNull(),
+    provider: text().$type<"github" | "discord" | "slack" | "linear" | "telegram">().notNull(),
     phase: text()
       .$type<
         | "github_setup"
@@ -869,6 +874,7 @@ export const organizationConnectionAttempts = pgTable(
         | "discord_authorization"
         | "slack_authorization"
         | "linear_authorization"
+        | "telegram_authorization"
       >()
       .notNull(),
     stateVerifier: text("state_verifier").notNull().unique(),
@@ -898,11 +904,11 @@ export const organizationConnectionAttempts = pgTable(
     index("organization_connection_attempts_expiry_idx").on(table.expiresAt),
     check(
       "organization_connection_attempts_provider_check",
-      sql`${table.provider} in ('github', 'discord', 'slack', 'linear')`,
+      sql`${table.provider} in ('github', 'discord', 'slack', 'linear', 'telegram')`,
     ),
     check(
       "organization_connection_attempts_phase_check",
-      sql`${table.phase} in ('github_setup', 'github_user_authorization', 'discord_authorization', 'slack_authorization', 'linear_authorization')`,
+      sql`${table.phase} in ('github_setup', 'github_user_authorization', 'discord_authorization', 'slack_authorization', 'linear_authorization', 'telegram_authorization')`,
     ),
     check(
       "organization_connection_attempts_shape_check",
@@ -910,7 +916,8 @@ export const organizationConnectionAttempts = pgTable(
         or (${table.phase} = 'github_user_authorization' and ${table.provider} = 'github' and ${table.candidateExternalId} is not null and (${table.pkceVerifier} is not null or ${table.consumedAt} is not null))
         or (${table.phase} = 'discord_authorization' and ${table.provider} = 'discord' and ${table.candidateExternalId} is null and ${table.pkceVerifier} is null)
         or (${table.phase} = 'slack_authorization' and ${table.provider} = 'slack' and ${table.candidateExternalId} is null and ${table.pkceVerifier} is null)
-        or (${table.phase} = 'linear_authorization' and ${table.provider} = 'linear' and ${table.candidateExternalId} is null and ${table.pkceVerifier} is null)`,
+        or (${table.phase} = 'linear_authorization' and ${table.provider} = 'linear' and ${table.candidateExternalId} is null and ${table.pkceVerifier} is null)
+        or (${table.phase} = 'telegram_authorization' and ${table.provider} = 'telegram' and ${table.candidateExternalId} is null and ${table.pkceVerifier} is null)`,
     ),
   ],
 );
@@ -1027,6 +1034,106 @@ export const discordConnections = pgTable(
       table.organizationId,
       table.slug,
     ),
+  ],
+);
+
+export const telegramConnections = pgTable(
+  "telegram_connections",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    /** Telegram chat ids are 64-bit; they are kept as text, as Discord snowflakes are. */
+    chatId: text("chat_id").notNull().unique(),
+    chatType: text("chat_type").$type<"private" | "group" | "supergroup">().notNull(),
+    chatTitle: text("chat_title").notNull(),
+    providerApplicationId: text("provider_application_id"),
+    slug: text().notNull(),
+    connectedByUserId: text("connected_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("telegram_connections_id_organization_unique").on(table.id, table.organizationId),
+    uniqueIndex("telegram_connections_organization_slug_unique").on(
+      table.organizationId,
+      table.slug,
+    ),
+    check(
+      "telegram_connections_chat_type_check",
+      sql`${table.chatType} in ('private', 'group', 'supergroup')`,
+    ),
+  ],
+);
+
+/**
+ * The Bot API cannot read chat history, so Hub keeps the messages of the conversations it takes
+ * part in: messages that start or continue a run, replies to those, and the bot's own messages.
+ */
+export const telegramMessages = pgTable(
+  "telegram_messages",
+  {
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => telegramConnections.id, { onDelete: "cascade" }),
+    chatId: text("chat_id").notNull(),
+    messageId: bigint("message_id", { mode: "number" }).notNull(),
+    /** The forum topic, or the root message of the reply chain, or `chat` for a whole chat. */
+    conversationId: text("conversation_id").notNull(),
+    topicId: bigint("topic_id", { mode: "number" }),
+    replyToMessageId: bigint("reply_to_message_id", { mode: "number" }),
+    authorId: text("author_id").notNull(),
+    authorUsername: text("author_username").notNull(),
+    fromBot: boolean("from_bot").notNull(),
+    text: text().notNull(),
+    attachments: jsonb().$type<TelegramAttachmentRecord[]>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.chatId, table.messageId] }),
+    index("telegram_messages_conversation_idx").on(
+      table.chatId,
+      table.conversationId,
+      table.messageId,
+    ),
+    index("telegram_messages_created_idx").on(table.createdAt),
+  ],
+);
+
+/** Buttons an agent attached to a reply, until the first accepted click resolves them. */
+export const conversationChoices = pgTable(
+  "conversation_choices",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    provider: text().$type<"discord" | "telegram">().notNull(),
+    connectionId: uuid("connection_id").notNull(),
+    triggerName: text("trigger_name").notNull(),
+    conversationKey: text("conversation_key").notNull(),
+    agentExecutionId: uuid("agent_execution_id").notNull(),
+    /** The provider's coordinates of the message that carries the buttons. */
+    messageLocator: jsonb("message_locator").$type<JsonValue>().notNull(),
+    /** The trigger event that asked, so a click carries the same routing as a reply would. */
+    origin: jsonb().$type<JsonValue>().notNull(),
+    options: jsonb().$type<ConversationChoiceOption[]>().notNull(),
+    resolvedIndex: integer("resolved_index"),
+    resolvedByUserId: text("resolved_by_user_id"),
+    resolvedByName: text("resolved_by_name"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index("conversation_choices_expiry_idx").on(table.expiresAt),
+    check("conversation_choices_provider_check", sql`${table.provider} in ('discord', 'telegram')`),
   ],
 );
 
@@ -1291,7 +1398,7 @@ export const runtimeProviderConfiguration = pgTable(
   (table) => [
     check(
       "runtime_provider_configuration_provider_check",
-      sql`${table.provider} in ('github', 'slack', 'discord', 'linear')`,
+      sql`${table.provider} in ('github', 'slack', 'discord', 'linear', 'telegram')`,
     ),
     check("runtime_provider_configuration_version_check", sql`${table.version} > 0`),
   ],
@@ -1308,7 +1415,7 @@ export const runtimeProviderActivations = pgTable(
   (table) => [
     check(
       "runtime_provider_activation_provider_check",
-      sql`${table.provider} in ('github', 'slack', 'discord', 'linear')`,
+      sql`${table.provider} in ('github', 'slack', 'discord', 'linear', 'telegram')`,
     ),
     check("runtime_provider_activation_version_check", sql`${table.configurationVersion} >= 0`),
   ],

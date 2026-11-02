@@ -937,6 +937,7 @@ function candidateConfigurationId(configuration: ProviderApplicationConfiguratio
     return configuration.appId;
   }
   if (configuration.provider === "linear") return configuration.clientId;
+  if (configuration.provider === "telegram") return configuration.botToken;
   return configuration.applicationId;
 }
 

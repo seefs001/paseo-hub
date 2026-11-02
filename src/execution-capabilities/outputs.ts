@@ -1,11 +1,14 @@
 import type { JsonValue } from "../config/compiler.js";
 import { compileFinishExecutionArguments } from "../workflows/json-schema.js";
+import { choicesToolProperty } from "../conversation-choices/index.js";
 
 export interface AllowedOutput {
   type: string;
   /** Absent for the event-native reply capability exposed by single-run triggers. */
   max?: number | undefined;
   required?: boolean;
+  /** The trigger author allowed this output to attach choice buttons. */
+  choices?: boolean | undefined;
 }
 
 export interface OutputToolSchemaNode {
@@ -46,6 +49,8 @@ export interface OutputCapability {
   readonly type: string;
   readonly tool: OutputToolDefinition;
   readonly available?: (outputContext: unknown) => boolean;
+  /** The provider can attach choice buttons; the tool then takes `choices` where allowed. */
+  readonly choices?: boolean;
   readonly execute: OutputExecutor;
 }
 
@@ -199,9 +204,16 @@ export function executionToolDefinitions(
         declaration.max === undefined
           ? capability.tool.description
           : `${capability.tool.description} (up to ${String(declaration.max)} times).`,
-      inputSchema: capability.tool.inputSchema,
+      inputSchema:
+        declaration.choices === true && capability.choices === true
+          ? withChoices(capability.tool.inputSchema)
+          : capability.tool.inputSchema,
     })),
   ];
+}
+
+function withChoices(schema: OutputToolSchema): OutputToolSchema {
+  return { ...schema, properties: { ...schema.properties, choices: choicesToolProperty } };
 }
 
 function toolSchema(value: JsonValue): OutputToolSchema {

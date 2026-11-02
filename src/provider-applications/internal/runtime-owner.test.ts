@@ -667,6 +667,7 @@ function providerConfigurationId(configuration: ProviderApplicationConfiguration
   if (configuration.provider === "github") return configuration.appId;
   if (configuration.provider === "slack") return configuration.appId;
   if (configuration.provider === "linear") return configuration.clientId;
+  if (configuration.provider === "telegram") return configuration.botToken;
   return configuration.applicationId;
 }
 

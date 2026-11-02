@@ -38,6 +38,7 @@ export function createDatabasePublicOperationRepository(
           slug,
           organizationName: linearOrganizationName,
         })),
+        telegram: (connections.telegram ?? []).map(({ slug, chatTitle }) => ({ slug, chatTitle })),
       };
     },
     async listSetupResources(organizationId) {

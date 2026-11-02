@@ -16,5 +16,6 @@ it("keeps provider readiness separate from connection inventory", () => {
     discord: { status: "connected" },
     slack: { status: "disconnected" },
     linear: { status: "disconnected" },
+    telegram: { status: "notConfigured" },
   });
 });

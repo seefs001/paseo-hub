@@ -35,6 +35,7 @@ import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as AgentSessionsSessionIdMcpRouteImport } from './routes/agent-sessions/$sessionId/mcp'
 import { Route as AgentExecutionsExecutionIdMcpRouteImport } from './routes/agent-executions/$executionId/mcp'
 import { Route as ApiV1CliAuthorizationsPollRouteImport } from './routes/api/v1/cli-authorizations/poll'
+import { Route as ApiIntegrationsTelegramEventsRouteImport } from './routes/api/integrations/telegram/events'
 import { Route as ApiIntegrationsSlackEventsRouteImport } from './routes/api/integrations/slack/events'
 import { Route as ApiIntegrationsSlackCallbackRouteImport } from './routes/api/integrations/slack/callback'
 import { Route as ApiIntegrationsLinearEventsRouteImport } from './routes/api/integrations/linear/events'
@@ -188,6 +189,12 @@ const ApiV1CliAuthorizationsPollRoute =
     id: '/poll',
     path: '/poll',
     getParentRoute: () => ApiV1CliAuthorizationsRoute,
+  } as any)
+const ApiIntegrationsTelegramEventsRoute =
+  ApiIntegrationsTelegramEventsRouteImport.update({
+    id: '/api/integrations/telegram/events',
+    path: '/api/integrations/telegram/events',
+    getParentRoute: () => rootRouteImport,
   } as any)
 const ApiIntegrationsSlackEventsRoute =
   ApiIntegrationsSlackEventsRouteImport.update({
@@ -355,6 +362,7 @@ export interface FileRoutesByFullPath {
   '/api/integrations/linear/events': typeof ApiIntegrationsLinearEventsRoute
   '/api/integrations/slack/callback': typeof ApiIntegrationsSlackCallbackRoute
   '/api/integrations/slack/events': typeof ApiIntegrationsSlackEventsRoute
+  '/api/integrations/telegram/events': typeof ApiIntegrationsTelegramEventsRoute
   '/api/v1/cli-authorizations/poll': typeof ApiV1CliAuthorizationsPollRoute
   '/o/$organizationSlug/settings/api-keys': typeof ShellOOrganizationSlugSettingsApiKeysRoute
   '/o/$organizationSlug/settings/billing': typeof ShellOOrganizationSlugSettingsBillingRoute
@@ -401,6 +409,7 @@ export interface FileRoutesByTo {
   '/api/integrations/linear/events': typeof ApiIntegrationsLinearEventsRoute
   '/api/integrations/slack/callback': typeof ApiIntegrationsSlackCallbackRoute
   '/api/integrations/slack/events': typeof ApiIntegrationsSlackEventsRoute
+  '/api/integrations/telegram/events': typeof ApiIntegrationsTelegramEventsRoute
   '/api/v1/cli-authorizations/poll': typeof ApiV1CliAuthorizationsPollRoute
   '/o/$organizationSlug/settings/api-keys': typeof ShellOOrganizationSlugSettingsApiKeysRoute
   '/o/$organizationSlug/settings/billing': typeof ShellOOrganizationSlugSettingsBillingRoute
@@ -451,6 +460,7 @@ export interface FileRoutesById {
   '/api/integrations/linear/events': typeof ApiIntegrationsLinearEventsRoute
   '/api/integrations/slack/callback': typeof ApiIntegrationsSlackCallbackRoute
   '/api/integrations/slack/events': typeof ApiIntegrationsSlackEventsRoute
+  '/api/integrations/telegram/events': typeof ApiIntegrationsTelegramEventsRoute
   '/api/v1/cli-authorizations/poll': typeof ApiV1CliAuthorizationsPollRoute
   '/_shell/o/$organizationSlug/settings/api-keys': typeof ShellOOrganizationSlugSettingsApiKeysRoute
   '/_shell/o/$organizationSlug/settings/billing': typeof ShellOOrganizationSlugSettingsBillingRoute
@@ -501,6 +511,7 @@ export interface FileRouteTypes {
     | '/api/integrations/linear/events'
     | '/api/integrations/slack/callback'
     | '/api/integrations/slack/events'
+    | '/api/integrations/telegram/events'
     | '/api/v1/cli-authorizations/poll'
     | '/o/$organizationSlug/settings/api-keys'
     | '/o/$organizationSlug/settings/billing'
@@ -547,6 +558,7 @@ export interface FileRouteTypes {
     | '/api/integrations/linear/events'
     | '/api/integrations/slack/callback'
     | '/api/integrations/slack/events'
+    | '/api/integrations/telegram/events'
     | '/api/v1/cli-authorizations/poll'
     | '/o/$organizationSlug/settings/api-keys'
     | '/o/$organizationSlug/settings/billing'
@@ -596,6 +608,7 @@ export interface FileRouteTypes {
     | '/api/integrations/linear/events'
     | '/api/integrations/slack/callback'
     | '/api/integrations/slack/events'
+    | '/api/integrations/telegram/events'
     | '/api/v1/cli-authorizations/poll'
     | '/_shell/o/$organizationSlug/settings/api-keys'
     | '/_shell/o/$organizationSlug/settings/billing'
@@ -634,6 +647,7 @@ export interface RootRouteChildren {
   ApiIntegrationsLinearEventsRoute: typeof ApiIntegrationsLinearEventsRoute
   ApiIntegrationsSlackCallbackRoute: typeof ApiIntegrationsSlackCallbackRoute
   ApiIntegrationsSlackEventsRoute: typeof ApiIntegrationsSlackEventsRoute
+  ApiIntegrationsTelegramEventsRoute: typeof ApiIntegrationsTelegramEventsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -819,6 +833,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/v1/cli-authorizations/poll'
       preLoaderRoute: typeof ApiV1CliAuthorizationsPollRouteImport
       parentRoute: typeof ApiV1CliAuthorizationsRoute
+    }
+    '/api/integrations/telegram/events': {
+      id: '/api/integrations/telegram/events'
+      path: '/api/integrations/telegram/events'
+      fullPath: '/api/integrations/telegram/events'
+      preLoaderRoute: typeof ApiIntegrationsTelegramEventsRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/integrations/slack/events': {
       id: '/api/integrations/slack/events'
@@ -1093,6 +1114,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiIntegrationsLinearEventsRoute: ApiIntegrationsLinearEventsRoute,
   ApiIntegrationsSlackCallbackRoute: ApiIntegrationsSlackCallbackRoute,
   ApiIntegrationsSlackEventsRoute: ApiIntegrationsSlackEventsRoute,
+  ApiIntegrationsTelegramEventsRoute: ApiIntegrationsTelegramEventsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

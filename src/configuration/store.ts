@@ -671,7 +671,7 @@ async function compileTriggers(
     if (typeof authoredConnection === "string" && candidates.length === 0) {
       issues.push({
         path: triggerFilterPath(trigger, "connection"),
-        message: `"${authoredConnection}" does not match any ${providerLabel(provider)} connection (${formatConnectionCandidates(provider, usage[provider])})`,
+        message: `"${authoredConnection}" does not match any ${providerLabel(provider)} connection (${formatConnectionCandidates(provider, usage[provider] ?? [])})`,
       });
       continue;
     }
@@ -736,7 +736,8 @@ function providerForEvent(eventName: string): ConnectionProvider | undefined {
   return provider === "github" ||
     provider === "slack" ||
     provider === "discord" ||
-    provider === "linear"
+    provider === "linear" ||
+    provider === "telegram"
     ? provider
     : undefined;
 }
@@ -745,7 +746,8 @@ function readAuthoredResource(
   provider: ConnectionProvider,
   filters: CompiledTrigger["filters"] | undefined,
 ): string | undefined {
-  if (filters === undefined) return undefined;
+  // A Telegram connection is one chat, so the connection slug is the only resource there is.
+  if (filters === undefined || provider === "telegram") return undefined;
   let value: string | undefined;
   if (provider === "github") value = filters.repo;
   else if (provider === "slack") value = filters.workspace;
@@ -759,7 +761,7 @@ function connectionCandidates(
   usage: Awaited<ReturnType<Database["organizationConnectionUsage"]>>,
   filters: CompiledTrigger["filters"] | undefined,
 ) {
-  const connections = usage[provider];
+  const connections: readonly { id: string; slug: string }[] = usage[provider] ?? [];
   const authoredSlug = filters?.["connection"];
   if (typeof authoredSlug !== "string") return connections;
   return connections.filter((connection) => connection.slug === authoredSlug);
@@ -817,6 +819,7 @@ function resourceField(provider: ConnectionProvider): "repo" | "workspace" | "gu
 function providerLabel(provider: ConnectionProvider): string {
   if (provider === "github") return "GitHub";
   if (provider === "slack") return "Slack";
+  if (provider === "telegram") return "Telegram";
   return provider === "discord" ? "Discord" : "Linear";
 }
 

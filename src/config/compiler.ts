@@ -68,6 +68,8 @@ const AllowOutputSchema = z
     type: z.string().regex(EVENT_NAME),
     max: z.number().int().nonnegative().optional(),
     required: z.boolean().optional(),
+    /** The reply may carry choice buttons; a click continues the conversation. */
+    choices: z.boolean().optional(),
   })
   .strict()
   .superRefine((output, context) => {
@@ -265,7 +267,12 @@ export interface CompiledStep {
   github?: CompiledGitHubAuthority | undefined;
   condition?: Expression | undefined;
   output?: { schema: JsonValue } | undefined;
-  allowOutputs: readonly { type: string; max?: number | undefined; required: boolean }[];
+  allowOutputs: readonly {
+    type: string;
+    max?: number | undefined;
+    required: boolean;
+    choices?: boolean | undefined;
+  }[];
   autoArchive: boolean;
   background: boolean;
 }
@@ -424,6 +431,7 @@ const CompiledStepSchema: z.ZodType<CompiledStep> = z
           type: z.string().regex(EVENT_NAME),
           max: z.number().int().positive().optional(),
           required: z.boolean().default(false),
+          choices: z.boolean().optional(),
         })
         .strict(),
     ),
@@ -631,11 +639,14 @@ function compileStep(
     ...(github === undefined ? {} : { github }),
     ...(condition === undefined ? {} : { condition }),
     ...(outputDeclaration === undefined ? {} : { output: outputDeclaration }),
-    allowOutputs: (step.allow_outputs ?? []).map((allowOutput) => ({
-      type: allowOutput.type,
-      max: allowOutput.max ?? 1,
-      required: allowOutput.required ?? false,
-    })),
+    allowOutputs: (step.allow_outputs ?? []).map((allowOutput) => {
+      const grant = {
+        type: allowOutput.type,
+        max: allowOutput.max ?? 1,
+        required: allowOutput.required ?? false,
+      };
+      return allowOutput.choices === true ? Object.assign(grant, { choices: true }) : grant;
+    }),
     autoArchive: step.auto_archive ?? false,
     background: step.background ?? false,
   };
@@ -1410,8 +1421,11 @@ function validateTriggerLaunchSecurity(trigger: CompiledTrigger): void {
     );
   }
   // Without an emoji list every reaction, a thumbs-up included, would start a run.
-  if (trigger.on === "discord.reaction_added" && (trigger.filters?.emojis?.length ?? 0) === 0) {
-    throw new Error(`trigger ${trigger.name} requires filters.emojis for discord.reaction_added`);
+  if (
+    (trigger.on === "discord.reaction_added" || trigger.on === "telegram.reaction_added") &&
+    (trigger.filters?.emojis?.length ?? 0) === 0
+  ) {
+    throw new Error(`trigger ${trigger.name} requires filters.emojis for ${trigger.on}`);
   }
 }
 

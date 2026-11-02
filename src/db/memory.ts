@@ -40,6 +40,14 @@ import type {
   RecordConfigurationSyncAttemptInput,
   ConfigurationSyncAttemptRecord,
   AcceptDiscordEventInput,
+  AcceptTelegramEventInput,
+  BindTelegramConnectionInput,
+  BoundTelegramConnection,
+  ConversationChoiceRecord,
+  InsertConversationChoiceInput,
+  ResolveConversationChoiceResult,
+  TelegramConnectionRecord,
+  TelegramMessageRecord,
   AcceptGitHubEventInput,
   AcceptLinearEventInput,
   AcceptSlackEventInput,
@@ -220,6 +228,9 @@ class MemoryDatabase implements Database {
   private readonly githubRepositories = new Map<string, GitHubRepositoryRecord>();
   private readonly githubConnections = new Map<number, GitHubConnectionRecord>();
   private readonly discordConnections = new Map<string, DiscordConnectionRecord>();
+  private readonly telegramConnections = new Map<string, TelegramConnectionRecord>();
+  private readonly telegramMessages = new Map<string, TelegramMessageRecord>();
+  private readonly conversationChoices = new Map<string, ConversationChoiceRecord>();
   private readonly slackConnections = new Map<string, SlackConnectionRecord>();
   private readonly linearConnections = new Map<string, LinearConnectionRecord>();
   private readonly organizationIds: Set<string>;
@@ -1059,6 +1070,17 @@ class MemoryDatabase implements Database {
       binding?.id,
       input.guildId,
       reason,
+    );
+  }
+
+  async acceptTelegramEvent(input: AcceptTelegramEventInput): Promise<ProviderEventAcceptance> {
+    const binding = this.telegramConnections.get(input.chatId);
+    return this.acceptMemoryEvent(
+      input,
+      binding?.organizationId,
+      binding?.id,
+      input.chatId,
+      input.dropReason ?? (binding === undefined ? "telegram_unbound" : undefined),
     );
   }
 
@@ -3043,6 +3065,9 @@ class MemoryDatabase implements Database {
       linear: Array.from(this.linearConnections.values()).filter(
         (connection) => connection.organizationId === organizationId,
       ),
+      telegram: Array.from(this.telegramConnections.values()).filter(
+        (connection) => connection.organizationId === organizationId,
+      ),
     };
   }
 
@@ -3353,6 +3378,113 @@ class MemoryDatabase implements Database {
     return Promise.resolve();
   }
 
+  bindTelegramConnection(_input: BindTelegramConnectionInput): Promise<BoundTelegramConnection> {
+    return connectionPersistenceUnavailable();
+  }
+
+  findTelegramConnection(chatId: string): Promise<TelegramConnectionRecord | undefined> {
+    return Promise.resolve(this.telegramConnections.get(chatId));
+  }
+
+  removeTelegramConnection(chatId: string): Promise<void> {
+    this.telegramConnections.delete(chatId);
+    return Promise.resolve();
+  }
+
+  moveTelegramConnection(fromChatId: string, toChatId: string): Promise<void> {
+    const connection = this.telegramConnections.get(fromChatId);
+    if (connection !== undefined) {
+      this.telegramConnections.delete(fromChatId);
+      this.telegramConnections.set(toChatId, {
+        ...connection,
+        chatId: toChatId,
+        chatType: "supergroup",
+      });
+    }
+    return Promise.resolve();
+  }
+
+  recordTelegramMessages(messages: readonly TelegramMessageRecord[]): Promise<void> {
+    for (const message of messages) {
+      const key = `${message.chatId}:${String(message.messageId)}`;
+      if (!this.telegramMessages.has(key)) this.telegramMessages.set(key, { ...message });
+    }
+    return Promise.resolve();
+  }
+
+  findTelegramMessage(chatId: string, messageId: number) {
+    return Promise.resolve(this.telegramMessages.get(`${chatId}:${String(messageId)}`));
+  }
+
+  listTelegramConversation(input: {
+    chatId: string;
+    conversationId: string;
+    beforeMessageId: number;
+    limit: number;
+  }): Promise<TelegramMessageRecord[]> {
+    return Promise.resolve(
+      Array.from(this.telegramMessages.values())
+        .filter(
+          (message) =>
+            message.chatId === input.chatId &&
+            message.conversationId === input.conversationId &&
+            message.messageId < input.beforeMessageId,
+        )
+        .toSorted((left, right) => left.messageId - right.messageId)
+        .slice(-input.limit),
+    );
+  }
+
+  insertConversationChoice(
+    input: InsertConversationChoiceInput,
+  ): Promise<ConversationChoiceRecord> {
+    const choice: ConversationChoiceRecord = {
+      ...input,
+      id: randomUUID(),
+      messageLocator: {},
+      resolvedIndex: null,
+      resolvedByUserId: null,
+      resolvedByName: null,
+      resolvedAt: null,
+    };
+    this.conversationChoices.set(choice.id, choice);
+    return Promise.resolve(choice);
+  }
+
+  setConversationChoiceMessage(id: string, messageLocator: JsonValue): Promise<void> {
+    const choice = this.conversationChoices.get(id);
+    if (choice !== undefined) this.conversationChoices.set(id, { ...choice, messageLocator });
+    return Promise.resolve();
+  }
+
+  findConversationChoice(id: string): Promise<ConversationChoiceRecord | undefined> {
+    return Promise.resolve(this.conversationChoices.get(id));
+  }
+
+  resolveConversationChoice(input: {
+    id: string;
+    index: number;
+    userId: string;
+    userName: string;
+    now: Date;
+  }): Promise<ResolveConversationChoiceResult> {
+    const choice = this.conversationChoices.get(input.id);
+    if (choice === undefined) return Promise.resolve({ status: "unavailable" });
+    if (choice.resolvedIndex !== null) {
+      return Promise.resolve({ status: "alreadyResolved", choice });
+    }
+    if (choice.expiresAt <= input.now) return Promise.resolve({ status: "unavailable" });
+    const resolved: ConversationChoiceRecord = {
+      ...choice,
+      resolvedIndex: input.index,
+      resolvedByUserId: input.userId,
+      resolvedByName: input.userName,
+      resolvedAt: input.now,
+    };
+    this.conversationChoices.set(input.id, resolved);
+    return Promise.resolve({ status: "resolved", choice: resolved });
+  }
+
   async close(): Promise<void> {}
 
   private readAttachment(id: string): AttachmentRecord {
@@ -3365,6 +3497,7 @@ class MemoryDatabase implements Database {
     input:
       | AcceptGitHubEventInput
       | AcceptDiscordEventInput
+      | AcceptTelegramEventInput
       | AcceptSlackEventInput
       | AcceptLinearEventInput,
     organizationId: string | undefined,
@@ -3561,11 +3694,13 @@ function providerForInput(
   input:
     | AcceptGitHubEventInput
     | AcceptDiscordEventInput
+    | AcceptTelegramEventInput
     | AcceptSlackEventInput
     | AcceptLinearEventInput,
-): "github" | "discord" | "slack" | "linear" {
+): "github" | "discord" | "slack" | "linear" | "telegram" {
   if ("installationId" in input) return "github";
   if ("guildId" in input) return "discord";
+  if ("chatId" in input) return "telegram";
   return "teamId" in input ? "slack" : "linear";
 }
 

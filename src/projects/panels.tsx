@@ -51,7 +51,7 @@ import {
 } from "./panel-state.js";
 import { archiveProject, activityRunSnapshot, updateProjectSlug } from "./functions.js";
 const CONNECTIONS_DESCRIPTION = "Organization provider connections.";
-const CONNECTION_PROVIDERS = ["github", "discord", "slack", "linear"] as const;
+const CONNECTION_PROVIDERS = ["github", "discord", "slack", "linear", "telegram"] as const;
 type ConnectionProviderName = (typeof CONNECTION_PROVIDERS)[number];
 
 function ConnectionsLoading() {
@@ -112,7 +112,10 @@ export function OrganizationConnectionsPanel() {
       { data: { ...scope, provider } },
       {
         onSuccess: (response) => {
-          if (response.status === "ok") window.location.assign(response.data.url);
+          if (response.status !== "ok") return;
+          // Telegram finishes the connection in its own app; this page stays to show the result.
+          if (provider === "telegram") window.open(response.data.url, "_blank", "noopener");
+          else window.location.assign(response.data.url);
         },
       },
     );
@@ -315,11 +318,12 @@ export function ProjectOverviewPanel() {
           ready={
             data.connections.github.length +
               data.connections.discord.length +
+              data.connections.telegram.length +
               data.connections.slack.length +
               data.connections.linear.length >
             0
           }
-          detail={`${String(data.connections.github.length + data.connections.discord.length + data.connections.slack.length + data.connections.linear.length)} organization connections`}
+          detail={`${String(data.connections.github.length + data.connections.discord.length + data.connections.slack.length + data.connections.linear.length + data.connections.telegram.length)} organization connections`}
         />
       </Section>
       <Section
@@ -716,11 +720,19 @@ function connectionRows(data: OrganizationSnapshot) {
         ? ("requiresReauthorization" as const)
         : ("connected" as const),
     })),
+    ...data.connections.telegram.map((connection) => ({
+      provider: "telegram" as const,
+      id: connection.id,
+      name: connection.slug,
+      externalId: `${connection.chatTitle} · chat ${connection.chatId}`,
+      status: "connected" as const,
+    })),
   ];
 }
 function providerLabel(provider: ConnectionProviderName) {
   if (provider === "github") return "GitHub";
   if (provider === "discord") return "Discord";
+  if (provider === "telegram") return "Telegram";
   return provider === "slack" ? "Slack" : "Linear";
 }
 

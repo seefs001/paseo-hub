@@ -3,6 +3,7 @@ import type { Database } from "../../db/types.js";
 import { createDiscordRegistration } from "../../providers/discord/index.js";
 import { createGitHubRegistration } from "../../providers/github/index.js";
 import { createLinearRegistration } from "../../providers/linear/index.js";
+import { createTelegramRegistration } from "../../providers/telegram/index.js";
 import { createSlackRegistration } from "../../providers/slack/index.js";
 import { createSlackSocketInstallationVerifier } from "../../providers/slack/installation.js";
 import { startSlackSocketFixture } from "../../test-utils/slack-socket-fixture.js";
@@ -134,6 +135,7 @@ export const FIXTURE_APP_IDENTITIES: Readonly<Record<Provider, ProviderApplicati
   discord: { provider: "discord", id: "900", name: "Paseo" },
   slack: { provider: "slack", id: "browser-slack-app", name: "Paseo" },
   linear: { provider: "linear", id: "browser-linear-client", name: "Paseo" },
+  telegram: { provider: "telegram", id: "browser-telegram-bot", name: "@paseo_bot" },
 };
 
 /** The identity an environment-configured provider activates with at boot. */
@@ -299,6 +301,9 @@ export function browserRegistrationFactory(fixtures: BrowserProviderApplicationF
         activateConfiguration: input.activateConfiguration,
         onVerifiedInstallation: input.onVerifiedLinearInstallation,
       });
+    }
+    if (configuration.provider === "telegram") {
+      return createTelegramRegistration({ ...shared, configuration });
     }
     return createSlackRegistration({
       ...shared,

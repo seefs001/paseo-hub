@@ -14,6 +14,7 @@ import {
 import { toDatabaseError } from "./errors.js";
 import { withApiKeySerialization } from "./api-key-serialization.js";
 import { ConnectionRepository } from "./connections.js";
+import { ConversationRepository } from "./conversations.js";
 import { ProviderEventAcceptanceRepository } from "./trigger-acceptance.js";
 import {
   toAgentExecutionRecord,
@@ -73,6 +74,10 @@ import type {
   AcceptGitHubEventInput,
   AcceptLinearEventInput,
   AcceptSlackEventInput,
+  AcceptTelegramEventInput,
+  BindTelegramConnectionInput,
+  InsertConversationChoiceInput,
+  TelegramMessageRecord,
   UpdateLinearConnectionTokensInput,
   LinearConnectionRefreshOperation,
   GitHubInstallationSyncOwner,
@@ -142,6 +147,7 @@ class PgDatabase implements Database {
   readonly executionAuthority;
   private readonly connections;
   private readonly triggerAcceptance;
+  private readonly conversations;
 
   constructor(
     private readonly pool: DatabaseRuntime,
@@ -150,6 +156,7 @@ class PgDatabase implements Database {
     this.schedules = new ScheduleRepository(this.pool);
     this.executionAuthority = new ExecutionAuthorityRepository(this.pool);
     this.connections = new ConnectionRepository(this.pool, locks);
+    this.conversations = new ConversationRepository(this.pool);
     this.triggerAcceptance = new ProviderEventAcceptanceRepository(
       this.pool,
       locks,
@@ -163,6 +170,10 @@ class PgDatabase implements Database {
 
   acceptDiscordEvent(input: AcceptDiscordEventInput) {
     return this.triggerAcceptance.acceptDiscord(input);
+  }
+
+  acceptTelegramEvent(input: AcceptTelegramEventInput) {
+    return this.triggerAcceptance.acceptTelegram(input);
   }
 
   acceptSlackEvent(input: AcceptSlackEventInput) {
@@ -3903,7 +3914,7 @@ class PgDatabase implements Database {
        order by connection.account_login, connection.id`,
       [organizationId],
     );
-    const [discord, slack, linear] = await Promise.all([
+    const [discord, slack, linear, telegram] = await Promise.all([
       query<{
         id: string;
         organization_id: string;
@@ -3957,6 +3968,21 @@ class PgDatabase implements Database {
          order by linear_organization_name, id`,
         [organizationId],
       ),
+      query<{
+        id: string;
+        organization_id: string;
+        slug: string;
+        chat_id: string;
+        chat_type: "private" | "group" | "supergroup";
+        chat_title: string;
+        provider_application_id: string | null;
+      }>(
+        this.pool,
+        `select id, organization_id, slug, chat_id, chat_type, chat_title, provider_application_id
+         from telegram_connections where organization_id = $1
+         order by chat_title, id`,
+        [organizationId],
+      ),
     ]);
     return {
       github: github.rows.map((row) => ({
@@ -4000,6 +4026,15 @@ class PgDatabase implements Database {
         refreshToken: row.refresh_token,
         accessTokenExpiresAt: row.access_token_expires_at,
         scopes: stringArray(row.scopes),
+        providerApplicationId: row.provider_application_id,
+      })),
+      telegram: telegram.rows.map((row) => ({
+        id: row.id,
+        organizationId: row.organization_id,
+        slug: row.slug,
+        chatId: row.chat_id,
+        chatType: row.chat_type,
+        chatTitle: row.chat_title,
         providerApplicationId: row.provider_application_id,
       })),
     };
@@ -4298,6 +4333,50 @@ class PgDatabase implements Database {
 
   removeDiscordConnection(guildId: string): Promise<void> {
     return this.connections.removeDiscord(guildId);
+  }
+
+  bindTelegramConnection(input: BindTelegramConnectionInput) {
+    return this.connections.bindTelegram(input);
+  }
+
+  findTelegramConnection(chatId: string) {
+    return this.connections.findTelegram(chatId);
+  }
+
+  removeTelegramConnection(chatId: string): Promise<void> {
+    return this.connections.removeTelegram(chatId);
+  }
+
+  moveTelegramConnection(fromChatId: string, toChatId: string): Promise<void> {
+    return this.connections.moveTelegram(fromChatId, toChatId);
+  }
+
+  recordTelegramMessages(messages: readonly TelegramMessageRecord[]): Promise<void> {
+    return this.conversations.recordTelegramMessages(messages);
+  }
+
+  findTelegramMessage(chatId: string, messageId: number) {
+    return this.conversations.findTelegramMessage(chatId, messageId);
+  }
+
+  listTelegramConversation(input: Parameters<Database["listTelegramConversation"]>[0]) {
+    return this.conversations.listTelegramConversation(input);
+  }
+
+  insertConversationChoice(input: InsertConversationChoiceInput) {
+    return this.conversations.insertConversationChoice(input);
+  }
+
+  setConversationChoiceMessage(id: string, messageLocator: JsonValue) {
+    return this.conversations.setConversationChoiceMessage(id, messageLocator);
+  }
+
+  findConversationChoice(id: string) {
+    return this.conversations.findConversationChoice(id);
+  }
+
+  resolveConversationChoice(input: Parameters<Database["resolveConversationChoice"]>[0]) {
+    return this.conversations.resolveConversationChoice(input);
   }
 
   async close(): Promise<void> {

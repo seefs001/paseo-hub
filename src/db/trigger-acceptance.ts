@@ -9,6 +9,7 @@ import type {
   AcceptGitHubEventInput,
   AcceptLinearEventInput,
   AcceptSlackEventInput,
+  AcceptTelegramEventInput,
   GitHubInstallationSyncOwner,
   GitHubInstallationSyncClaim,
   GitHubLifecycleReceiptClaimInput,
@@ -43,6 +44,10 @@ export class ProviderEventAcceptanceRepository {
     return this.acceptProvider("discord", input.guildId, input.guildId, input);
   }
 
+  acceptTelegram(input: AcceptTelegramEventInput): Promise<ProviderEventAcceptance> {
+    return this.acceptProvider("telegram", input.chatId, input.chatId, input);
+  }
+
   acceptSlack(input: AcceptSlackEventInput): Promise<ProviderEventAcceptance> {
     return this.acceptProvider("slack", input.teamId, input.teamId, input);
   }
@@ -52,7 +57,7 @@ export class ProviderEventAcceptanceRepository {
   }
 
   private async acceptProvider(
-    provider: "github" | "slack" | "discord" | "linear",
+    provider: "github" | "slack" | "discord" | "linear" | "telegram",
     externalId: number | string,
     resourceId: number | string | undefined,
     input: ProviderEventEvidence,
@@ -557,7 +562,7 @@ function selectFirstRoutePerProject<Route extends { projectId: string }>(
 
 async function findConnection(
   transaction: HubTransaction,
-  provider: "github" | "slack" | "discord" | "linear",
+  provider: "github" | "slack" | "discord" | "linear" | "telegram",
   externalId: number | string,
 ) {
   if (provider === "github") {
@@ -597,6 +602,17 @@ async function findConnection(
       .limit(1);
     return row;
   }
+  if (provider === "telegram") {
+    const [row] = await transaction
+      .select({
+        id: schema.telegramConnections.id,
+        organizationId: schema.telegramConnections.organizationId,
+      })
+      .from(schema.telegramConnections)
+      .where(eq(schema.telegramConnections.chatId, String(externalId)))
+      .limit(1);
+    return row;
+  }
   const [row] = await transaction
     .select({
       id: schema.discordConnections.id,
@@ -612,7 +628,7 @@ async function claimProviderReceipt(
   transaction: HubTransaction,
   input: {
     organizationId: string;
-    provider: "github" | "slack" | "discord" | "linear" | "manual";
+    provider: "github" | "slack" | "discord" | "linear" | "telegram" | "manual";
     connectionId: string | null;
     resourceId: string | null;
     input: ProviderEventEvidence;

@@ -35,10 +35,11 @@ export function createProviderApplicationInventory(
     },
     async lastEventAt(provider, identity, configurationVersion) {
       if (provider === "discord") return null;
+      // Telegram updates carry no signature; the webhook secret or the poll proved them.
       const result = await database.query<{ received_at: Date | string | null }>(
         `select max(received_at) as received_at
          from provider_event_receipts
-         where provider = $1 and signature_hash is not null
+         where provider = $1 and (signature_hash is not null or provider = 'telegram')
            and provider_application_id = $2
            and provider_configuration_version = $3`,
         [provider, identity.id, configurationVersion],
@@ -79,6 +80,7 @@ function connectionTable(provider: Provider): string {
   if (provider === "github") return "github_connections";
   if (provider === "slack") return "slack_connections";
   if (provider === "linear") return "linear_connections";
+  if (provider === "telegram") return "telegram_connections";
   return "discord_connections";
 }
 
@@ -100,6 +102,12 @@ function connectionIdentityQuery(provider: Provider): string {
                    provider_application_id as application_id,
                    false as action_needed, scopes, refresh_token, access_token_expires_at
             from linear_connections order by connected_at`;
+  }
+  if (provider === "telegram") {
+    return `select id::text as id, chat_title as name,
+                   provider_application_id as application_id,
+                   false as action_needed, null::jsonb as scopes
+            from telegram_connections order by connected_at`;
   }
   return `select id::text as id, guild_name as name,
                  provider_application_id as application_id,
