@@ -32,7 +32,11 @@ export const NormalizedDiscordContextMessageSchema = z.object({
 });
 
 export const NormalizedDiscordMessageEventSchema = z.object({
-  type: z.literal("mention"),
+  /**
+   * `mention` names the bot; `thread_message` is an unmentioned message in a thread the bot
+   * started; `reaction` is a reaction added to the message, by `reaction.user`.
+   */
+  type: z.enum(["mention", "thread_message", "reaction"]),
   id: DiscordSnowflakeSchema,
   guildId: DiscordSnowflakeSchema,
   channelId: DiscordSnowflakeSchema,
@@ -46,6 +50,15 @@ export const NormalizedDiscordMessageEventSchema = z.object({
   createdAt: z.string(),
   attachments: z.array(DiscordMessageAttachmentSchema),
   referencedMessage: DiscordReferencedMessageSchema.nullable(),
+  reaction: z
+    .object({
+      /** The Unicode emoji, or a custom emoji's name. */
+      emoji: z.string().min(1),
+      /** Present for a custom emoji only. */
+      emojiId: DiscordSnowflakeSchema.nullable(),
+      user: DiscordMessageAuthorSchema,
+    })
+    .optional(),
 });
 
 export type DiscordMessageAuthor = z.infer<typeof DiscordMessageAuthorSchema>;

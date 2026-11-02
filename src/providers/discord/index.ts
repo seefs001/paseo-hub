@@ -120,6 +120,8 @@ export function createDiscordRegistration(
             organizationBillingUrl(database, options.publicBaseUrl!, organizationId),
           ...(attachments === undefined ? {} : { attachments }),
           bot,
+          hasConversation: async (projectId, conversationKey) =>
+            (await database.findAgentSessionByKey(projectId, conversationKey)) !== undefined,
         }),
     ],
     sources: [gateway],

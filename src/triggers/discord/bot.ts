@@ -2,6 +2,7 @@ import {
   Client,
   DiscordAPIError,
   GatewayIntentBits,
+  Partials,
   RESTJSONErrorCodes,
   type GuildBasedChannel,
   type Message,
@@ -94,10 +95,17 @@ export interface DiscordBotClient {
     beforeMessageId: string;
   }): Promise<NormalizedDiscordContextMessage[]>;
   onMessageCreate(handler: DiscordRawMessageHandler): () => void;
+  /** Reactions added in a server, with the reacted message and the reacting user fetched. */
+  onReactionAdd?(handler: DiscordReactionAddHandler): () => void;
   onGuildDelete(handler: DiscordGuildDeleteHandler): () => void;
 }
 
 export type DiscordRawMessageHandler = (message: Message) => Promise<void>;
+export type DiscordReactionAddHandler = (reaction: {
+  message: Message;
+  emoji: { name: string; id: string | null };
+  user: { id: string; username: string; bot: boolean };
+}) => Promise<void>;
 export type DiscordGuildDeleteHandler = (guild: {
   id: string;
   unavailable: boolean;
@@ -126,10 +134,14 @@ export function createDiscordBotClient(options: CreateDiscordBotClientOptions): 
       intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildMessageReactions,
         GatewayIntentBits.MessageContent,
       ],
+      // A reaction can land on a message from before the bot started, which it has not cached.
+      partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.User],
     });
   const handlers = new Set<DiscordRawMessageHandler>();
+  const reactionHandlers = new Set<DiscordReactionAddHandler>();
   const guildDeleteHandlers = new Set<DiscordGuildDeleteHandler>();
   const pendingReplyDestinations = new Map<string, Promise<DiscordSendableChannel>>();
   let started = false;
@@ -151,6 +163,38 @@ export function createDiscordBotClient(options: CreateDiscordBotClientOptions): 
         );
       },
     );
+  });
+  client.on("messageReactionAdd", (partialReaction, partialUser) => {
+    if (reactionHandlers.size === 0 || partialUser.id === client.user?.id) return;
+    void (async () => {
+      const reaction = partialReaction.partial ? await partialReaction.fetch() : partialReaction;
+      const user = partialUser.partial ? await partialUser.fetch() : partialUser;
+      if (user.bot || reaction.message.guildId === null) return;
+      const message = reaction.message.partial ? await reaction.message.fetch() : reaction.message;
+      const name = reaction.emoji.name;
+      if (name === null) return;
+      await Promise.all(
+        Array.from(reactionHandlers, (handler) =>
+          handler({
+            message,
+            emoji: { name, id: reaction.emoji.id },
+            user: { id: user.id, username: user.username, bot: user.bot },
+          }),
+        ),
+      );
+    })().catch((error: unknown) => {
+      reportFailure(
+        error,
+        { operation: "discord.reaction.handoff", component: "triggers", provider: "discord" },
+        {
+          scrubValues: [options.token],
+          diagnostic: {
+            channelId: partialReaction.message.channelId,
+            messageId: partialReaction.message.id,
+          },
+        },
+      );
+    });
   });
   client.on("guildDelete", (guild) => {
     const guildId = DiscordSnowflakeSchema.parse(guild.id);
@@ -273,6 +317,12 @@ export function createDiscordBotClient(options: CreateDiscordBotClientOptions): 
       handlers.add(handler);
       return () => {
         handlers.delete(handler);
+      };
+    },
+    onReactionAdd(handler) {
+      reactionHandlers.add(handler);
+      return () => {
+        reactionHandlers.delete(handler);
       };
     },
     onGuildDelete(handler) {

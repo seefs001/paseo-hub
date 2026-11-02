@@ -17,12 +17,11 @@ export function matchDiscordTriggers(
   botClientId: string,
   connectionId?: string | null,
 ): MatchedDiscordTrigger[] {
-  const expectedEventName = `discord.${event.type}`;
   const matches: MatchedDiscordTrigger[] = [];
 
   for (const trigger of config.triggers) {
     if (
-      trigger.on !== expectedEventName ||
+      !acceptsEvent(trigger, event) ||
       !matchesFilter(event, trigger.filters, botClientId, connectionId)
     ) {
       continue;
@@ -34,14 +33,41 @@ export function matchDiscordTriggers(
   return matches;
 }
 
+const MENTION_EVENT = "discord.mention";
+const REACTION_EVENT = "discord.reaction_added";
+
+/**
+ * A mention and a reaction each start their own trigger's runs. An unmentioned thread message
+ * starts nothing: it is offered to the triggers that opted into continuing their thread
+ * conversations, and the provider keeps it only where that conversation already exists.
+ */
+function acceptsEvent(
+  trigger: MatchedTriggerDefinition,
+  event: NormalizedDiscordMessageEvent,
+): boolean {
+  if (event.type === "mention") return trigger.on === MENTION_EVENT;
+  if (event.type === "reaction") return trigger.on === REACTION_EVENT;
+  return (
+    (trigger.on === MENTION_EVENT || trigger.on === REACTION_EVENT) &&
+    trigger.filters?.thread_messages === true
+  );
+}
+
+/** Whether any trigger in a configuration can take this kind of Discord event at all. */
+export function discordEventHasTrigger(
+  config: { triggers: readonly MatchedTriggerDefinition[] },
+  event: NormalizedDiscordMessageEvent,
+): boolean {
+  return config.triggers.some((trigger) => acceptsEvent(trigger, event));
+}
+
 function matchesFilter(
   event: NormalizedDiscordMessageEvent,
   filter: TriggerFilter | undefined,
   botClientId: string,
   connectionId?: string | null,
 ): boolean {
-  const pattern = filter === undefined ? undefined : readPatternFilter(filter);
-  if (!matchesBotMentionPattern(event, botClientId, pattern)) {
+  if (!matchesEventGate(event, filter, botClientId)) {
     return false;
   }
 
@@ -67,15 +93,52 @@ function matchesFilter(
     return false;
   }
 
+  const actor = discordEventActor(event);
   if (
     !filter.from_users.includes("*") &&
-    !filter.from_users.includes(event.author.username) &&
-    !filter.from_users.includes(event.author.id)
+    !filter.from_users.includes(actor.username) &&
+    !filter.from_users.includes(actor.id)
   ) {
     return false;
   }
 
   return true;
+}
+
+/** Who caused the event: the reacting user for a reaction, otherwise the message author. */
+export function discordEventActor(event: NormalizedDiscordMessageEvent) {
+  return event.reaction?.user ?? event.author;
+}
+
+/**
+ * What each kind of event must carry before the shared filters apply. A mention names the bot
+ * and its command marker; a reaction uses one of the trigger's emojis; a thread message carries
+ * neither, since it continues a conversation that already passed them.
+ */
+function matchesEventGate(
+  event: NormalizedDiscordMessageEvent,
+  filter: TriggerFilter | undefined,
+  botClientId: string,
+): boolean {
+  if (event.type === "mention") {
+    const pattern = filter === undefined ? undefined : readPatternFilter(filter);
+    return matchesBotMentionPattern(event, botClientId, pattern);
+  }
+  if (event.type === "reaction") {
+    const reaction = event.reaction;
+    const emojis = new Set((filter?.emojis ?? []).map(withoutVariationSelector));
+    return (
+      reaction !== undefined &&
+      (emojis.has(withoutVariationSelector(reaction.emoji)) ||
+        (reaction.emojiId !== null && emojis.has(reaction.emojiId)))
+    );
+  }
+  return true;
+}
+
+/** "\u2764\ufe0f" and "\u2764" are the same reaction; typed emoji often differ only by this. */
+function withoutVariationSelector(emoji: string): string {
+  return emoji.replaceAll("\ufe0f", "");
 }
 
 export function readDiscordPromptBody(

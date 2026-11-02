@@ -3,7 +3,7 @@ import type { ProviderEventAcceptance } from "../../db/types.js";
 import type { TriggerHandler, TriggerSource } from "../index.js";
 import type { ProviderEventDropReasonCode } from "../drop-reason.js";
 import { logProviderEventIntake } from "../audit.js";
-import type { DiscordBotClient } from "./bot.js";
+import type { DiscordBotClient, DiscordReactionAddHandler } from "./bot.js";
 import { NormalizedDiscordMessageEventSchema } from "./events.js";
 import type { NormalizedDiscordMessageEvent } from "./events.js";
 
@@ -25,6 +25,7 @@ export function createDiscordGatewaySource(
 ): TriggerSource {
   const handlers = new Set<TriggerHandler>();
   let unsubscribe: (() => void) | undefined;
+  let unsubscribeReactions: (() => void) | undefined;
   let unsubscribeGuildDelete: (() => void) | undefined;
 
   return {
@@ -37,6 +38,9 @@ export function createDiscordGatewaySource(
       unsubscribe = options.bot.onMessageCreate(async (message) => {
         await dispatchMessage(message, handlers, options.bot.getSelfUserId(), options);
       });
+      unsubscribeReactions = options.bot.onReactionAdd?.(async (reaction) => {
+        await dispatchReaction(reaction, handlers, options.bot.getSelfUserId(), options);
+      });
       unsubscribeGuildDelete = options.bot.onGuildDelete(async (guild) => {
         await options.applyGuildDelete(guild.id, guild.unavailable);
       });
@@ -47,6 +51,8 @@ export function createDiscordGatewaySource(
         unsubscribe();
         unsubscribe = undefined;
       }
+      unsubscribeReactions?.();
+      unsubscribeReactions = undefined;
       unsubscribeGuildDelete?.();
       unsubscribeGuildDelete = undefined;
       await options.bot.stop();
@@ -57,6 +63,7 @@ export function createDiscordGatewaySource(
 export function normalizeMessage(
   message: Message,
   botUserId?: string,
+  type: NormalizedDiscordMessageEvent["type"] = "mention",
 ): NormalizedDiscordMessageEvent | undefined {
   if (message.guildId === null) {
     return undefined;
@@ -76,7 +83,7 @@ export function normalizeMessage(
           .map((role) => role.id);
 
   return NormalizedDiscordMessageEventSchema.parse({
-    type: "mention",
+    type,
     id: message.id,
     guildId: message.guildId,
     channelId: message.channelId,
@@ -104,28 +111,81 @@ async function dispatchMessage(
   options: CreateDiscordGatewaySourceOptions,
 ): Promise<void> {
   const normalized = normalizeMessage(message, botUserId);
+  if (normalized === undefined || normalized.author.bot === true) return;
 
-  if (normalized === undefined) {
+  if (mentionsBot(normalized, botUserId)) {
+    await deliver(normalized, "discord.mention", `discord-${normalized.messageId}`, {
+      receivedAt: new Date(normalized.createdAt),
+      handlers,
+      options,
+    });
     return;
   }
-  if (!isTriggerCandidate(normalized, botUserId)) {
-    return;
+  // An unmentioned message only matters inside a thread the bot started, where it may continue
+  // that thread's conversation. Everything else in the server is not Hub's business.
+  if (isBotThread(message, botUserId)) {
+    await deliver(
+      { ...normalized, type: "thread_message" },
+      "discord.thread_message",
+      `discord-${normalized.messageId}`,
+      { receivedAt: new Date(normalized.createdAt), handlers, options },
+    );
   }
+}
 
-  const normalizedEvent = NormalizedDiscordMessageEventSchema.parse(normalized);
+async function dispatchReaction(
+  reaction: Parameters<DiscordReactionAddHandler>[0],
+  handlers: Set<TriggerHandler>,
+  botUserId: string,
+  options: CreateDiscordGatewaySourceOptions,
+): Promise<void> {
+  if (reaction.user.bot || reaction.user.id === botUserId) return;
+  const normalized = normalizeMessage(reaction.message, botUserId, "reaction");
+  if (normalized === undefined) return;
+  const emojiKey = reaction.emoji.id ?? reaction.emoji.name;
+  await deliver(
+    NormalizedDiscordMessageEventSchema.parse({
+      ...normalized,
+      reaction: {
+        emoji: reaction.emoji.name,
+        emojiId: reaction.emoji.id,
+        user: reaction.user,
+      },
+    }),
+    "discord.reaction_added",
+    `discord-reaction-${normalized.messageId}-${reaction.user.id}-${emojiKey}`,
+    // The reacted message can be old; the event is the reaction, which is now.
+    { receivedAt: new Date(), handlers, options },
+  );
+}
 
+async function deliver(
+  event: NormalizedDiscordMessageEvent,
+  source: string,
+  deliveryId: string,
+  {
+    receivedAt,
+    handlers,
+    options,
+  }: {
+    receivedAt: Date;
+    handlers: Set<TriggerHandler>;
+    options: CreateDiscordGatewaySourceOptions;
+  },
+): Promise<void> {
+  const normalizedEvent = NormalizedDiscordMessageEventSchema.parse(event);
   const acceptance = await options.accept({
     guildId: normalizedEvent.guildId,
-    source: "discord.mention",
-    deliveryId: `discord-${normalizedEvent.messageId}`,
-    receivedAt: new Date(normalizedEvent.createdAt),
+    source,
+    deliveryId,
+    receivedAt,
     payload: normalizedEvent,
     ...(handlers.size === 0 ? { dropReason: "configuration_unavailable" } : {}),
   });
   logProviderEventIntake({
     provider: "discord",
-    source: "discord.mention",
-    deliveryId: `discord-${normalizedEvent.messageId}`,
+    source,
+    deliveryId,
     resourceId: normalizedEvent.guildId,
     acceptance,
   });
@@ -136,10 +196,14 @@ async function dispatchMessage(
   }
 }
 
-function isTriggerCandidate(event: NormalizedDiscordMessageEvent, botUserId: string): boolean {
+function mentionsBot(event: NormalizedDiscordMessageEvent, botUserId: string): boolean {
+  return event.mentionedUserIds.includes(botUserId) || (event.mentionedBotRoleIds?.length ?? 0) > 0;
+}
+
+function isBotThread(message: Message, botUserId: string): boolean {
+  const channel = message.channel;
   return (
-    !event.author.bot &&
-    (event.mentionedUserIds.includes(botUserId) || (event.mentionedBotRoleIds?.length ?? 0) > 0)
+    typeof channel.isThread === "function" && channel.isThread() && channel.ownerId === botUserId
   );
 }
 

@@ -10,6 +10,7 @@ import { logger } from "../../logger.js";
 import { reportFailure } from "../../failures/index.js";
 import { createDiscordRegistration } from "../../providers/discord/index.js";
 import { discordReplyOutputTool } from "../../triggers/discord/reply.js";
+import { DISCORD_EVENT_SOURCES } from "../../triggers/discord/provider.js";
 import { createGitHubRegistration } from "../../providers/github/index.js";
 import { createLinearRegistration } from "../../providers/linear/index.js";
 import type {
@@ -634,7 +635,7 @@ function actionNames(provider: Provider): readonly string[] {
 
 function eventNames(provider: Provider): TriggerProvider["eventNames"] {
   if (provider === "slack") return ["slack.mention"];
-  if (provider === "discord") return ["discord.mention"];
+  if (provider === "discord") return DISCORD_EVENT_SOURCES;
   if (provider === "linear") return ["linear.issue", "linear.comment"];
   return GITHUB_TRIGGER_SOURCE_NAMES;
 }

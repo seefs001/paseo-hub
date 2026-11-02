@@ -44,6 +44,7 @@ function event(
 const EVENTS = {
   "slack.mention": event("slack", "Slack mention"),
   "discord.mention": event("discord", "Discord mention"),
+  "discord.reaction_added": event("discord", "Discord reaction added"),
   "github.issue_created": event("github", "GitHub issue created"),
   "github.pull_request_created": event("github", "GitHub pull request created"),
   "github.pull_request_ready_for_review": event("github", "GitHub pull request ready for review"),

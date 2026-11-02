@@ -103,6 +103,10 @@ const AuthoredTriggerFilterSchema = z
     /** Linear user IDs which may be assigned to the issue. */
     assignees: z.array(z.string().min(1)).min(1).optional(),
     channels: z.array(z.string().min(1)).optional(),
+    /** Discord: unmentioned messages continue a conversation in a thread the bot started. */
+    thread_messages: z.boolean().optional(),
+    /** Discord reactions which start a run: a Unicode emoji, or a custom emoji's name or ID. */
+    emojis: z.array(z.string().min(1)).min(1).optional(),
     from_users: z.array(z.string().min(1)).optional(),
     inputs: z.record(z.string(), InputValueSchema).optional(),
     connection: z
@@ -268,9 +272,10 @@ export type CompiledSteps = readonly CompiledStep[];
 export type CompiledTriggerFilter = Readonly<
   Omit<
     AuthoredTriggerFilter,
-    "channels" | "from_users" | "states" | "labels" | "exclude_labels" | "assignees"
+    "channels" | "emojis" | "from_users" | "states" | "labels" | "exclude_labels" | "assignees"
   > & {
     channels?: readonly string[] | undefined;
+    emojis?: readonly string[] | undefined;
     from_users?: readonly string[] | undefined;
     states?: readonly string[] | undefined;
     labels?: readonly string[] | undefined;
@@ -1398,6 +1403,10 @@ function validateTriggerLaunchSecurity(trigger: CompiledTrigger): void {
     throw new Error(
       `trigger ${trigger.name} requires a non-empty filters.from_users allowlist for externally sourced events`,
     );
+  }
+  // Without an emoji list every reaction, a thumbs-up included, would start a run.
+  if (trigger.on === "discord.reaction_added" && (trigger.filters?.emojis?.length ?? 0) === 0) {
+    throw new Error(`trigger ${trigger.name} requires filters.emojis for discord.reaction_added`);
   }
 }
 
