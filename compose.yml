@@ -15,8 +15,8 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   hub:
-    image: ghcr.io/getpaseo/hub:latest
-    pull_policy: always
+    build: .
+    pull_policy: build
     restart: unless-stopped
     depends_on:
       postgres:
