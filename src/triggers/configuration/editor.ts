@@ -8,6 +8,7 @@ import { ContinuationSchema } from "../continuation.js";
 import { parseDocument, stringify, type Document } from "yaml";
 import { z } from "zod";
 import { IDENTIFIER, TriggerDocumentSchema, type TriggerDocument } from "./schema.js";
+import { requiresExecutionMode } from "./unattended.js";
 
 import {
   eventDefinition,
@@ -153,7 +154,7 @@ export function patchTriggerYaml(yaml: string, value: TriggerFormValue): string 
   const agent = splitAgentId(value.agent);
   setIfChanged(document, ["run", "agent", "provider"], agent.provider);
   setOptional(document, ["run", "agent", "model"], agent.model);
-  setIfChanged(document, ["run", "agent", "mode"], value.mode.trim());
+  setOptional(document, ["run", "agent", "mode"], blankToUndefined(value.mode));
   setOptional(
     document,
     ["run", "agent", "thinkingOptionId"],
@@ -217,7 +218,7 @@ export function createTriggerYaml(value: TriggerFormValue): string {
         agent: {
           provider: agent.provider,
           ...(agent.model === undefined ? {} : { model: agent.model }),
-          mode: value.mode.trim(),
+          ...(blankToUndefined(value.mode) === undefined ? {} : { mode: value.mode.trim() }),
           ...(blankToUndefined(value.thinkingOptionId) === undefined
             ? {}
             : { thinkingOptionId: value.thinkingOptionId.trim() }),
@@ -248,6 +249,13 @@ function workingDirectoryErrors(value: TriggerFormValue): TriggerFieldErrors {
   const cwd = value.cwd.trim();
   if (cwd.length === 0) return { cwd: "Working directory is required." };
   return cwd.startsWith("/") ? {} : { cwd: "Working directory must be an absolute path." };
+}
+
+/** A provider without permission modes, such as Pi, runs with none; every other one needs one. */
+function modeErrors(value: TriggerFormValue, agentValid: boolean): TriggerFieldErrors {
+  if (value.mode.trim().length > 0) return {};
+  if (agentValid && !requiresExecutionMode(splitAgentId(value.agent).provider)) return {};
+  return { mode: "Execution mode is required." };
 }
 
 function recurrenceErrors(value: TriggerFormValue): TriggerFieldErrors {
@@ -324,7 +332,7 @@ export function triggerFormErrors(value: TriggerFormValue): TriggerFieldErrors {
   if (value.idleTimeout.trim().length === 0) errors.idleTimeout = "Idle timeout is required.";
   const agent = refused(() => splitAgentId(value.agent));
   if (agent !== undefined) errors.agent = agent;
-  if (value.mode.trim().length === 0) errors.mode = "Execution mode is required.";
+  Object.assign(errors, modeErrors(value, agent === undefined));
   const options = refused(() => parseProviderOptions(value.providerOptions));
   if (options !== undefined) errors.providerOptions = options;
   if (value.githubConnection.trim().length !== 0) {

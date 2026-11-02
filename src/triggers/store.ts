@@ -16,7 +16,11 @@ import {
   type TriggerDocument,
   type TriggerDocumentIssue,
 } from "./configuration/index.js";
-import { supportsUnattendedRuns, unattendedProviderRefusal } from "./configuration/unattended.js";
+import {
+  requiresExecutionMode,
+  supportsUnattendedRuns,
+  unattendedProviderRefusal,
+} from "./configuration/unattended.js";
 
 export interface SaveTriggerInput {
   triggerId?: string;
@@ -209,7 +213,7 @@ function validateAuthoringContract(trigger: TriggerDocument): void {
     issues.push({ path: ["run", "target", "cwd"], message: "must be an absolute path" });
   }
   for (const { path, agent } of authoredAgents(trigger)) {
-    if (agent.mode === undefined) {
+    if (requiresExecutionMode(agent.provider) && agent.mode === undefined) {
       issues.push({ path: [...path, "mode"], message: "is required for new triggers" });
     }
   }

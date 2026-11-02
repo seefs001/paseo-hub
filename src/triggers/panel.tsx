@@ -45,7 +45,7 @@ import type { HubProviderSnapshotEntry } from "../hub/protocol.js";
 import { EventFields } from "./event-fields.js";
 import { EDITOR_EVENTS, eventDefinition, parseEditorEvent } from "./configuration/events.js";
 import { selectedProviderModel } from "./provider-catalog.js";
-import { supportsUnattendedRuns } from "./configuration/unattended.js";
+import { requiresExecutionMode, supportsUnattendedRuns } from "./configuration/unattended.js";
 
 type BrowserTrigger = TriggerSnapshot["triggers"][number];
 type EditorMode = "form" | "yaml";
@@ -1154,7 +1154,7 @@ function ProviderCatalogFields({
       <FormField
         id="trigger-agent"
         label="Agent"
-        description="Models the selected daemon can run unattended: Claude, Codex, or OpenCode."
+        description="Models the selected daemon can run unattended: Claude, Codex, OpenCode, or Pi."
         required
         {...fieldError(errors, "agent")}
       >
@@ -1174,25 +1174,27 @@ function ProviderCatalogFields({
           />
         )}
       </FormField>
-      <FormField
-        id="trigger-mode"
-        label="Execution mode"
-        description="Modes reported for the selected provider."
-        required
-        {...fieldError(errors, "mode")}
-      >
-        {(control) => (
-          <Combobox
-            {...control}
-            required
-            value={form.mode}
-            options={modeOptions}
-            placeholder="Select a mode"
-            empty="No modes found."
-            onChange={(option) => onChange({ ...form, mode: option.value })}
-          />
-        )}
-      </FormField>
+      {selected.entry !== undefined && !requiresExecutionMode(selected.entry.provider) ? null : (
+        <FormField
+          id="trigger-mode"
+          label="Execution mode"
+          description="Modes reported for the selected provider."
+          required
+          {...fieldError(errors, "mode")}
+        >
+          {(control) => (
+            <Combobox
+              {...control}
+              required
+              value={form.mode}
+              options={modeOptions}
+              placeholder="Select a mode"
+              empty="No modes found."
+              onChange={(option) => onChange({ ...form, mode: option.value })}
+            />
+          )}
+        </FormField>
+      )}
       {thinkingOptions.length === 0 ? null : (
         <FormField
           id="trigger-thinking"
