@@ -17,6 +17,7 @@ import { Route as TestTriggerRouteImport } from './routes/test/trigger'
 import { Route as TestStripeCheckoutRouteImport } from './routes/test/stripe-checkout'
 import { Route as TestSmokeRouteImport } from './routes/test/smoke'
 import { Route as AssetsSplatRouteImport } from './routes/assets/$'
+import { Route as ApiTriggerSchemaDotjsonRouteImport } from './routes/api/trigger-schema[.]json'
 import { Route as ApiReferenceRouteImport } from './routes/api/reference'
 import { Route as ApiOpenapiDotjsonRouteImport } from './routes/api/openapi[.]json'
 import { Route as ApiSplatRouteImport } from './routes/api/$'
@@ -95,6 +96,11 @@ const TestSmokeRoute = TestSmokeRouteImport.update({
 const AssetsSplatRoute = AssetsSplatRouteImport.update({
   id: '/assets/$',
   path: '/assets/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiTriggerSchemaDotjsonRoute = ApiTriggerSchemaDotjsonRouteImport.update({
+  id: '/api/trigger-schema.json',
+  path: '/api/trigger-schema.json',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiReferenceRoute = ApiReferenceRouteImport.update({
@@ -335,6 +341,7 @@ export interface FileRoutesByFullPath {
   '/api/$': typeof ApiSplatRoute
   '/api/openapi.json': typeof ApiOpenapiDotjsonRoute
   '/api/reference': typeof ApiReferenceRoute
+  '/api/trigger-schema.json': typeof ApiTriggerSchemaDotjsonRoute
   '/assets/$': typeof AssetsSplatRoute
   '/test/smoke': typeof TestSmokeRoute
   '/test/stripe-checkout': typeof TestStripeCheckoutRoute
@@ -383,6 +390,7 @@ export interface FileRoutesByTo {
   '/api/$': typeof ApiSplatRoute
   '/api/openapi.json': typeof ApiOpenapiDotjsonRoute
   '/api/reference': typeof ApiReferenceRoute
+  '/api/trigger-schema.json': typeof ApiTriggerSchemaDotjsonRoute
   '/assets/$': typeof AssetsSplatRoute
   '/test/smoke': typeof TestSmokeRoute
   '/test/stripe-checkout': typeof TestStripeCheckoutRoute
@@ -432,6 +440,7 @@ export interface FileRoutesById {
   '/api/$': typeof ApiSplatRoute
   '/api/openapi.json': typeof ApiOpenapiDotjsonRoute
   '/api/reference': typeof ApiReferenceRoute
+  '/api/trigger-schema.json': typeof ApiTriggerSchemaDotjsonRoute
   '/assets/$': typeof AssetsSplatRoute
   '/test/smoke': typeof TestSmokeRoute
   '/test/stripe-checkout': typeof TestStripeCheckoutRoute
@@ -484,6 +493,7 @@ export interface FileRouteTypes {
     | '/api/$'
     | '/api/openapi.json'
     | '/api/reference'
+    | '/api/trigger-schema.json'
     | '/assets/$'
     | '/test/smoke'
     | '/test/stripe-checkout'
@@ -532,6 +542,7 @@ export interface FileRouteTypes {
     | '/api/$'
     | '/api/openapi.json'
     | '/api/reference'
+    | '/api/trigger-schema.json'
     | '/assets/$'
     | '/test/smoke'
     | '/test/stripe-checkout'
@@ -580,6 +591,7 @@ export interface FileRouteTypes {
     | '/api/$'
     | '/api/openapi.json'
     | '/api/reference'
+    | '/api/trigger-schema.json'
     | '/assets/$'
     | '/test/smoke'
     | '/test/stripe-checkout'
@@ -626,6 +638,7 @@ export interface RootRouteChildren {
   ApiSplatRoute: typeof ApiSplatRoute
   ApiOpenapiDotjsonRoute: typeof ApiOpenapiDotjsonRoute
   ApiReferenceRoute: typeof ApiReferenceRoute
+  ApiTriggerSchemaDotjsonRoute: typeof ApiTriggerSchemaDotjsonRoute
   AssetsSplatRoute: typeof AssetsSplatRoute
   TestSmokeRoute: typeof TestSmokeRoute
   TestStripeCheckoutRoute: typeof TestStripeCheckoutRoute
@@ -706,6 +719,13 @@ declare module '@tanstack/react-router' {
       path: '/assets/$'
       fullPath: '/assets/$'
       preLoaderRoute: typeof AssetsSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/trigger-schema.json': {
+      id: '/api/trigger-schema.json'
+      path: '/api/trigger-schema.json'
+      fullPath: '/api/trigger-schema.json'
+      preLoaderRoute: typeof ApiTriggerSchemaDotjsonRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/reference': {
@@ -1092,6 +1112,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiSplatRoute: ApiSplatRoute,
   ApiOpenapiDotjsonRoute: ApiOpenapiDotjsonRoute,
   ApiReferenceRoute: ApiReferenceRoute,
+  ApiTriggerSchemaDotjsonRoute: ApiTriggerSchemaDotjsonRoute,
   AssetsSplatRoute: AssetsSplatRoute,
   TestSmokeRoute: TestSmokeRoute,
   TestStripeCheckoutRoute: TestStripeCheckoutRoute,

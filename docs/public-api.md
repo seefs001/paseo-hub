@@ -17,6 +17,8 @@ CLI login starts anonymously at `POST /api/v1/cli-authorizations` and polls at `
 
 The canonical, executable operation and schema reference is served by each Hub instance at `/api/reference`; its OpenAPI 3.1 document is `/api/openapi.json`. There are no unversioned operator aliases.
 
+The trigger YAML contract is served as JSON Schema (draft 2020-12) at `/api/trigger-schema.json`. It needs no credential. It describes every field, the known events and their required filters, prompt expressions, and duration formats, so editors and agents can author a trigger before they call `POST /api/v1/triggers/validate`. It covers document shape only: daemon, connection, and expression checks still happen in validation. Editors that use yaml-language-server can reference it with `# yaml-language-server: $schema=<hub-url>/api/trigger-schema.json`.
+
 Every canonical `/api/v1` response, including unknown paths and wrong methods, uses RFC 9457 `application/problem+json` on failure and includes `X-Request-ID`; callers may supply that header to correlate a request. Wrong methods return `405` with `Allow`, while unknown paths return `404`. Every `401` response also includes `WWW-Authenticate: Bearer`.
 
 Configuration YAML may include an optional top-level `name` slug as deployment metadata. An explicit request `projectSlug` (including the CLI's `--project`/`-p` option) is authoritative. Otherwise Hub resolves or creates the named project in the authenticated organization; without either field, it resolves or restores that organization's `default` project. Changing `name` targets a different project and leaves the old project's history intact.

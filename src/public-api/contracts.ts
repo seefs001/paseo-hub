@@ -22,7 +22,8 @@ export const TriggerYamlRequestSchema = z
   .object({ yaml: z.string().min(1).max(1_000_000) })
   .strict()
   .openapi("TriggerYamlRequest", {
-    description: "One self-contained Paseo trigger YAML document.",
+    description:
+      "One self-contained Paseo trigger YAML document. Its JSON Schema is served at /api/trigger-schema.json.",
   });
 
 export const ValidatedTriggerSchema = z
