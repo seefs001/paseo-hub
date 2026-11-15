@@ -19,6 +19,7 @@ import type { HubBundleFile } from "../../src/config/bundle.js";
 import type { BrowserDiscordEvent } from "../../src/e2e/harness/browser-providers.js";
 import type { BrowserProviderScenario } from "../../src/e2e/harness/browser-providers.js";
 import type { FixtureBillingProduct } from "../../src/e2e/harness/browser-billing.js";
+import type { FakeGitHubCommand } from "../../src/test-utils/fake-github.js";
 import {
   FIXTURE_BILLING_PRODUCTS,
   fixtureSubscriptionId,
@@ -26,6 +27,7 @@ import {
 import { configurationBundleFixture } from "../../src/test-utils/configuration-bundle.js";
 import { slugify } from "../../src/slug.js";
 import { AppSetupSurface, allowClipboard } from "./apps.js";
+import { GitHubConnectFlow, type GitHubAccountChoice } from "./github.js";
 import { SHOTS } from "./app-evidence.js";
 import {
   ProjectNavigation,
@@ -38,6 +40,8 @@ export interface BuiltApplication {
   machineKey: string;
   logs(): string;
   deliverDiscord(event: BrowserDiscordEvent): Promise<void>;
+  /** Acts on GitHub's side, as a person on github.com would, outside of Hub. */
+  github(command: FakeGitHubCommand): Promise<void>;
   setGitHubConfiguration(input: {
     repositoryId: number;
     commitSha: string;
@@ -84,7 +88,6 @@ export interface BuiltApplicationOptions {
   registrationMode?: "open" | "invite_only" | "disabled";
   organizationCreation?: "open" | "disabled";
   providerConnections?: boolean;
-  githubApprovalRequired?: boolean;
   providerScenario?: BrowserProviderScenario;
   /** Operator-managed provider applications, starting from nothing configured. */
   providerApplications?: boolean;
@@ -118,7 +121,7 @@ const ORGANIZATION_DESTINATIONS = [
   "Triggers",
   "Activity",
   "Daemons",
-  "Connections",
+  "Integrations",
   "Settings",
 ] as const;
 /** Instance surfaces sit outside `/o/`, so the path is what says the sidebar is in instance scope. */
@@ -1132,6 +1135,23 @@ export class PaseoHub {
     return id;
   }
 
+  /** The operator console's details panel for one organization, read as label → value. */
+  async expectOperatorDetails(
+    alias: string,
+    input: { org: string; details: Readonly<Record<string, string>> },
+  ): Promise<void> {
+    await this.requireUser(alias).expectOperatorDetails(input);
+  }
+
+  /** The operator finds an organization by its ID and confirms it by who belongs to it. */
+  async expectOperatorFindsOrganizationById(
+    alias: string,
+    input: { org: string; member: { name: string; email: string; role: string } },
+  ): Promise<void> {
+    const id = await this.organizationIdForAlias(alias);
+    await this.requireUser(alias).expectOperatorFindsOrganizationById({ ...input, id });
+  }
+
   async openSeatOverrideEditor(
     alias: string,
     input: { org: string; max: number; reason: string },
@@ -1180,8 +1200,75 @@ export class PaseoHub {
     await this.requireUser(alias).expectMemberConnections();
   }
 
-  async connectGitHub(alias: string): Promise<void> {
-    await this.requireUser(alias).connectGitHub();
+  async connectGitHub(alias: string, account?: string): Promise<void> {
+    await this.requireUser(alias).connectGitHub(account);
+  }
+
+  /** Acts on GitHub's side of the primary application, as a person on github.com would. */
+  async onGitHub(command: FakeGitHubCommand): Promise<void> {
+    await this.primary.github(command);
+  }
+
+  async connectFromGitHubChooser(
+    alias: string,
+    account: string,
+    choices: readonly GitHubAccountChoice[],
+  ): Promise<void> {
+    await this.requireUser(alias).connectFromGitHubChooser(account, choices);
+  }
+
+  async expectGitHubConnection(
+    alias: string,
+    expected: { account: string; installationId: string },
+  ): Promise<void> {
+    await this.requireUser(alias).expectGitHubConnection(expected);
+  }
+
+  async pressConnectGitHub(alias: string): Promise<GitHubConnectFlow> {
+    return await this.requireUser(alias).pressConnectGitHub();
+  }
+
+  async startGitHubConnection(alias: string): Promise<GitHubConnectFlow> {
+    return await this.requireUser(alias).startGitHubConnection();
+  }
+
+  async expectGitHubConnected(alias: string): Promise<void> {
+    await this.requireUser(alias).expectGitHubConnected();
+  }
+
+  async expectGitHubNotConnected(alias: string, message: string): Promise<void> {
+    await this.requireUser(alias).expectGitHubNotConnected(message);
+  }
+
+  async expectGitHubNotice(alias: string, message: string): Promise<void> {
+    await this.requireUser(alias).expectGitHubNotice(message);
+  }
+
+  async disconnectGitHub(alias: string): Promise<void> {
+    await this.requireUser(alias).disconnectGitHub();
+  }
+
+  async expectNoConnections(alias: string): Promise<void> {
+    await this.requireUser(alias).expectNoConnections();
+  }
+
+  /**
+   * GitHub installs the App, but its return reaches Hub after the attempt expired. Hub refuses
+   * the return, and Connect GitHub again finds the installation in the chooser.
+   */
+  async proveExpiredGitHubReturnRecovers(alias: string): Promise<void> {
+    const user = this.requireUser(alias);
+    const expired = await user.beginProviderConnection("github");
+    await this.queryDatabase(
+      this.primary,
+      `update organization_connection_attempts
+       set expires_at = clock_timestamp() - interval '1 millisecond'`,
+      [],
+    );
+    await user.expectConnectionReturnUnavailable(expired);
+    await user.connectFromGitHubChooser("acme-inc", [
+      { account: "acme-inc", explanation: "Organization", connectable: true },
+    ]);
   }
 
   async connectDiscord(alias: string): Promise<void> {
@@ -1348,10 +1435,8 @@ export class PaseoHub {
   }
 
   async proveGitHubApprovalRequired(account: Account): Promise<void> {
-    const application = await this.startApplication({
-      databaseProfile: "fresh",
-      githubApprovalRequired: true,
-    });
+    const application = await this.startApplication({ databaseProfile: "fresh" });
+    await application.github({ op: "signIn", login: "mona" });
     const context = await this.browser.newContext();
     try {
       const user = new HubUser(application, context, await context.newPage());
@@ -1379,7 +1464,9 @@ export class PaseoHub {
         [],
       );
       await user.expectConnectionReturnUnavailable(expired);
-      const replayed = await user.beginProviderConnection("github");
+      // GitHub installed on acme-inc before the expired return reached Hub; the next attempt
+      // installs on the other account octo owns.
+      const replayed = await user.beginProviderConnection("github", "orbit-inc");
       await user.expectConnectionReturnConnected(replayed, "GitHub connected.");
       await user.expectConnectionReturnUnavailable(replayed);
     } finally {
@@ -4126,8 +4213,8 @@ class HubUser {
     const trigger = this.page.getByRole("button", { name: "Toggle Sidebar" });
     await trigger.click();
     const sidebar = this.page.getByRole("dialog", { name: "Sidebar" });
-    await sidebar.getByRole("link", { name: "Connections", exact: true }).click();
-    await expect(this.page).toHaveURL(/\/o\/[^/]+\/connections$/u);
+    await sidebar.getByRole("link", { name: "Integrations", exact: true }).click();
+    await expect(this.page).toHaveURL(/\/o\/[^/]+\/integrations$/u);
     await expect(sidebar).toBeHidden();
     await this.expectConnectionContents();
   }
@@ -4189,7 +4276,9 @@ class HubUser {
     // The heading renders immediately, before the organization list has loaded — wait for the
     // real picker (a combobox) rather than its loading skeleton, so this fails if the list never
     // arrives instead of racing ahead of it.
-    await expect(this.page.getByRole("combobox", { name: "Manage organization" })).toBeVisible();
+    await expect(
+      this.page.getByRole("combobox", { name: "Organization", exact: true }),
+    ).toBeVisible();
   }
 
   private limitRow(table: Locator, resource: string): Locator {
@@ -4208,8 +4297,55 @@ class HubUser {
    * loaded. Every operator override and audit read starts here. */
   private async openOperatorFor(org: string): Promise<void> {
     await this.openOperatorConsole();
-    await this.chooseOption(this.page.getByRole("combobox", { name: "Manage organization" }), org);
+    const picker = this.page.getByRole("combobox", { name: "Organization", exact: true });
+    await picker.click();
+    // Search by name, then pick the option by its name line: its ID line sits beneath it.
+    await this.page.getByPlaceholder("Search by name or ID…").fill(org);
+    await this.page
+      .getByRole("option")
+      .filter({ has: this.page.getByText(org, { exact: true }) })
+      .click();
+    await expect(picker).toHaveText(org);
     await expect(this.page.getByRole("table", { name: "Entitlements" })).toBeVisible();
+  }
+
+  async expectOperatorFindsOrganizationById(input: {
+    org: string;
+    id: string;
+    member: { name: string; email: string; role: string };
+  }): Promise<void> {
+    await this.openOperatorConsole();
+    const picker = this.page.getByRole("combobox", { name: "Organization", exact: true });
+    await picker.click();
+    await this.page.getByPlaceholder("Search by name or ID…").fill(input.id);
+    const option = this.page.getByRole("option");
+    await expect(option).toHaveCount(1);
+    await expect(option).toContainText(input.org);
+    await expect(option).toContainText(input.id);
+    await option.click();
+    await expect(picker).toHaveText(input.org);
+    await expect(this.operatorDetail("ID")).toContainText(input.id);
+    const members = this.page.getByRole("table", { name: "Members" });
+    await expect(members.getByRole("row").filter({ hasText: input.member.email })).toContainText(
+      `${input.member.name}${input.member.email}${input.member.role}`,
+    );
+  }
+
+  async expectOperatorDetails(input: {
+    org: string;
+    details: Readonly<Record<string, string>>;
+  }): Promise<void> {
+    await this.openOperatorFor(input.org);
+    for (const [label, value] of Object.entries(input.details)) {
+      await expect(this.operatorDetail(label)).toContainText(value);
+    }
+  }
+
+  private operatorDetail(label: string): Locator {
+    return this.page
+      .locator('dl[data-summary="Organization details"] > div')
+      .filter({ has: this.page.locator("dt", { hasText: new RegExp(`^${label}$`, "u") }) })
+      .locator("dd");
   }
 
   async openSeatOverrideEditor(input: { org: string; max: number; reason: string }): Promise<void> {
@@ -4624,13 +4760,13 @@ class HubUser {
   }
 
   private async expectConnectionShell(): Promise<void> {
-    await this.openOrganizationSection("Connections");
+    await this.openOrganizationSection("Integrations");
     await this.expectConnectionContents();
   }
 
   private async expectConnectionContents(): Promise<void> {
     await expect(
-      this.page.getByRole("heading", { name: "Connections", exact: true, level: 1 }),
+      this.page.getByRole("heading", { name: "Integrations", exact: true, level: 1 }),
     ).toBeVisible();
     await this.expectNoConnections();
     await expect(this.page.getByText(/does not deploy a/u)).toHaveCount(0);
@@ -4645,12 +4781,70 @@ class HubUser {
     await expectAccessible(this.page);
   }
 
-  async connectGitHub(): Promise<void> {
-    await this.openOrganizationSection("Connections");
-    const connectionsUrl = this.page.url();
+  async connectGitHub(account = "acme-inc"): Promise<void> {
+    const github = await this.pressConnectGitHub();
+    await github.connect(account);
+    await this.expectGitHubConnected();
+  }
+
+  /** Presses Connect GitHub on Integrations. The browser is on its way to GitHub's authorize page. */
+  async pressConnectGitHub(): Promise<GitHubConnectFlow> {
+    await this.openOrganizationSection("Integrations");
+    const github = new GitHubConnectFlow(this.page);
     await this.page.getByRole("button", { name: "Connect GitHub" }).click();
-    await expect(this.page).toHaveURL(connectionsUrl);
+    return github;
+  }
+
+  /** Presses Connect GitHub and authorizes if GitHub asks. The browser rests where that leads. */
+  async startGitHubConnection(): Promise<GitHubConnectFlow> {
+    const github = await this.pressConnectGitHub();
+    await github.authorizeWhenAsked();
+    return github;
+  }
+
+  /** Connects an account that already has the App, from the chooser, without GitHub's install page. */
+  async connectFromGitHubChooser(
+    account: string,
+    choices: readonly GitHubAccountChoice[],
+  ): Promise<void> {
+    const github = await this.startGitHubConnection();
+    await github.expectChooser(choices);
+    await expectAccessible(this.page);
+    await github.choose(account);
+    await this.expectGitHubConnected();
+    github.expectInstallPageNotVisited();
+  }
+
+  async expectGitHubConnected(): Promise<void> {
+    await expect(this.page).toHaveURL(/\/o\/[^/]+\/integrations$/u);
     await expect(this.page.getByRole("status")).toHaveText("GitHub connected.");
+  }
+
+  /** Back on Integrations with the reason nothing was connected, and nothing connected. */
+  async expectGitHubNotConnected(message: string): Promise<void> {
+    await expect(this.page).toHaveURL(/\/o\/[^/]+\/integrations$/u);
+    await this.expectConnectionFailure(message);
+    await expect(this.connectionRow("GitHub")).toHaveCount(0);
+  }
+
+  /** Back on Integrations with a notice, such as a cancellation, and nothing connected. */
+  async expectGitHubNotice(message: string): Promise<void> {
+    await expect(this.page).toHaveURL(/\/o\/[^/]+\/integrations$/u);
+    await expect(this.page.getByRole("status")).toHaveText(message);
+    await expect(this.connectionRow("GitHub")).toHaveCount(0);
+  }
+
+  async disconnectGitHub(): Promise<void> {
+    await this.openOrganizationSection("Integrations");
+    await this.disconnectProvider("GitHub");
+  }
+
+  async expectGitHubConnection(expected: { account: string; installationId: string }) {
+    await this.openOrganizationSection("Integrations");
+    const github = this.connectionRow("GitHub");
+    await expect(github).toHaveCount(1);
+    await expect(github).toContainText(expected.account);
+    await expect(github).toContainText(`installation ${expected.installationId}`);
   }
 
   async connectDiscord(): Promise<void> {
@@ -4660,21 +4854,43 @@ class HubUser {
     await expect(this.page.getByRole("status")).toHaveText("Discord connected.");
   }
 
-  async beginProviderConnection(provider: "github" | "discord"): Promise<string> {
-    await this.openOrganizationSection("Connections");
+  /**
+   * Starts a connection and captures the provider's first return to Hub without delivering it.
+   * For GitHub that is the setup return after installing on `account`. GitHub reaches it by a
+   * redirect, which Playwright does not route, so the install itself is sent to GitHub and its
+   * redirect is read instead of followed.
+   */
+  async beginProviderConnection(
+    provider: "github" | "discord",
+    account = "acme-inc",
+  ): Promise<string> {
+    await this.openOrganizationSection("Integrations");
     const connectionsUrl = this.page.url();
-    const callback = `**/api/integrations/${provider}/**`;
+    const callback =
+      provider === "github"
+        ? (url: URL) => url.pathname.endsWith("/apps/paseo/installations/new/install")
+        : "**/api/integrations/discord/**";
     const name = provider === "github" ? "GitHub" : "Discord";
     let destination: string | undefined;
-    await this.page.route(callback, (route) => {
-      destination = route.request().url();
-      void route.abort();
+    await this.page.route(callback, async (route) => {
+      if (provider === "github") {
+        const installed = await route.fetch({ maxRedirects: 0 });
+        destination = installed.headers()["location"];
+      } else {
+        destination = route.request().url();
+      }
+      await route.abort();
     });
+    const github = new GitHubConnectFlow(this.page);
     await this.page.getByRole("button", { name: `Connect ${name}` }).click();
+    if (provider === "github") {
+      await github.toInstallPage();
+      await github.installOn(account);
+    }
     await expect.poll(() => destination).toBeDefined();
     await this.page.unroute(callback);
     await this.page.goto(connectionsUrl);
-    await expect(this.page.getByRole("heading", { name: "Connections", level: 1 })).toBeVisible();
+    await expect(this.page.getByRole("heading", { name: "Integrations", level: 1 })).toBeVisible();
     return z.string().url().parse(destination);
   }
 
@@ -4686,7 +4902,7 @@ class HubUser {
     const name = provider === "github" ? "GitHub" : "Discord";
     const switcher = this.page.getByRole("button", { name: "Organization" });
     try {
-      await this.openOrganizationSection("Connections");
+      await this.openOrganizationSection("Integrations");
       await this.page.getByRole("button", { name: `Connect ${name}` }).click();
       await pending.startReceived();
 
@@ -4712,7 +4928,8 @@ class HubUser {
     } finally {
       await pending.release();
     }
-    await expect(this.page).toHaveURL(/\/o\/[^/]+\/connections$/u);
+    if (provider === "github") await new GitHubConnectFlow(this.page).connect("acme-inc");
+    await expect(this.page).toHaveURL(/\/o\/[^/]+\/integrations$/u);
     await expect(this.page.getByRole("status")).toHaveText(`${name} connected.`);
     await this.chooseOrganization(destinationOrganization);
     await expect(this.page.getByText(`${name} connected.`)).toHaveCount(0);
@@ -4722,7 +4939,7 @@ class HubUser {
     startReceived(): Promise<void>;
     release(): Promise<void>;
   }> {
-    await this.openOrganizationSection("Connections");
+    await this.openOrganizationSection("Integrations");
     let startReceived = () => {};
     const received = new Promise<void>((resolve) => {
       startReceived = resolve;
@@ -4785,14 +5002,23 @@ class HubUser {
     await expect(alert).toContainText(message);
   }
 
+  /** GitHub accounts are never transferred: the chooser says where it is connected instead. */
   async expectGitHubConnectionConflict(): Promise<void> {
-    await this.openOrganizationSection("Connections");
+    await this.openOrganizationSection("Integrations");
     const connectionsUrl = this.page.url();
+    const github = new GitHubConnectFlow(this.page);
     await this.page.getByRole("button", { name: "Connect GitHub" }).click();
+    await github.authorizeWhenAsked();
+    await github.expectChooser([
+      {
+        account: "acme-inc",
+        explanation:
+          "Connected to another organization on this Hub. Disconnect it there to connect it here.",
+        connectable: false,
+      },
+    ]);
+    await github.cancelChooser();
     await expect(this.page).toHaveURL(connectionsUrl);
-    await this.expectConnectionFailure(
-      "That account is already connected to another organization. Nothing was connected. Disconnect it there, or pick a different one.",
-    );
     await this.expectNoConnections();
     await this.expectNoProviderIdentity("acme-inc");
   }
@@ -4821,7 +5047,7 @@ class HubUser {
     organization: string,
   ): Promise<void> {
     await this.page.goto(url);
-    await expect(this.page).toHaveURL(/\/o\/[^/]+\/connections$/u);
+    await expect(this.page).toHaveURL(/\/o\/[^/]+\/integrations$/u);
     await expect(this.page.getByRole("button", { name: "Organization" })).toContainText(
       organization,
     );
@@ -4833,13 +5059,13 @@ class HubUser {
   }
 
   /**
-   * A return Hub cannot tie to the attempt that started it still belongs to Connections: that
+   * A return Hub cannot tie to the attempt that started it still belongs to Integrations: that
    * is the only surface that started anything, and the only one that can say what to do next.
    */
   async expectUntrustedConnectionReturnUnavailable(url: string): Promise<void> {
     await this.page.goto(url);
-    await expect(this.page).toHaveURL(/\/o\/[^/]+\/connections$/u);
-    await expect(this.page.getByRole("heading", { name: "Connections", level: 1 })).toBeVisible();
+    await expect(this.page).toHaveURL(/\/o\/[^/]+\/integrations$/u);
+    await expect(this.page.getByRole("heading", { name: "Integrations", level: 1 })).toBeVisible();
     await this.expectConnectionFailure(
       "That connection link had already been used or had expired, so it was refused. Nothing was connected. Start the connection again from this page.",
     );
@@ -4848,7 +5074,7 @@ class HubUser {
   /**
    * A provider return that reaches Hub in a browser with no session. A GitHub App whose setup
    * URL points at a host the operator never signed in to produces exactly this. It has to come
-   * back to Connections once the person signs in, saying that nothing was connected and why,
+   * back to Integrations once the person signs in, saying that nothing was connected and why,
    * instead of blaming app credentials on an unrelated page.
    */
   async expectSignedOutConnectionReturn(
@@ -4858,7 +5084,7 @@ class HubUser {
   ): Promise<void> {
     await this.page.goto(url);
     await expect(this.page).toHaveURL(
-      /\/connections\?app=github&result=connection_unauthenticated$/u,
+      /\/integrations\?app=github&result=connection_unauthenticated$/u,
     );
     const signIn = this.page.getByRole("form", { name: "Sign in" });
     await signIn.getByLabel("Email").fill(account.email);
@@ -4868,15 +5094,15 @@ class HubUser {
       .getByRole("list", { name: "Organizations" })
       .getByRole("button", { name: organizationName })
       .click();
-    await expect(this.page).toHaveURL(/\/o\/[^/]+\/connections$/u);
-    await expect(this.page.getByRole("heading", { name: "Connections", level: 1 })).toBeVisible();
+    await expect(this.page).toHaveURL(/\/o\/[^/]+\/integrations$/u);
+    await expect(this.page.getByRole("heading", { name: "Integrations", level: 1 })).toBeVisible();
     await this.expectConnectionFailure(
       "GitHub sent you back to a Hub address this browser isn't signed in to, so nothing was connected. Sign in there, or ask your Hub operator to check the GitHub app's callback and setup URLs, then start the connection again.",
     );
   }
 
   async expectNoProviderIdentity(value: string): Promise<void> {
-    await this.openOrganizationSection("Connections");
+    await this.openOrganizationSection("Integrations");
     await expect(this.page.getByText(value)).toHaveCount(0);
   }
 
@@ -4906,7 +5132,7 @@ class HubUser {
     discord: string;
     guildId: string;
   }): Promise<void> {
-    await this.openOrganizationSection("Connections");
+    await this.openOrganizationSection("Integrations");
     const connectionsUrl = this.page.url();
     const github = this.connectionRow("GitHub");
     const discord = this.connectionRow("Discord");
@@ -4920,23 +5146,25 @@ class HubUser {
   }
 
   async disconnectProviders(): Promise<void> {
-    for (const provider of ["GitHub", "Discord"]) {
-      const row = this.connectionRow(provider);
-      await row.getByRole("button", { name: /^Actions for /u }).click();
-      await this.page.getByRole("menuitem", { name: "Revoke" }).click();
-      const dialog = this.page.getByRole("alertdialog");
-      await expect(dialog).toBeVisible();
-      await dialog.getByRole("button", { name: "Revoke connection" }).click();
-      await expect(row).toHaveCount(0);
-      await expect(this.page.getByRole("status")).toHaveText(`${provider} disconnected.`);
-    }
+    for (const provider of ["GitHub", "Discord"] as const) await this.disconnectProvider(provider);
+  }
+
+  private async disconnectProvider(provider: "GitHub" | "Discord"): Promise<void> {
+    const row = this.connectionRow(provider);
+    await row.getByRole("button", { name: /^Actions for /u }).click();
+    await this.page.getByRole("menuitem", { name: "Revoke" }).click();
+    const dialog = this.page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Revoke connection" }).click();
+    await expect(row).toHaveCount(0);
+    await expect(this.page.getByRole("status")).toHaveText(`${provider} disconnected.`);
   }
 
   async proveConnectionDisconnectLocksOrganizationSwitch(
     destinationOrganization: string,
   ): Promise<void> {
     const switcher = this.page.getByRole("button", { name: "Organization" });
-    await this.openOrganizationSection("Connections");
+    await this.openOrganizationSection("Integrations");
     const github = this.connectionRow("GitHub");
     const trigger = github.getByRole("button", { name: /^Actions for /u });
     await expect(trigger).toBeVisible();
@@ -4950,7 +5178,9 @@ class HubUser {
       await pending.disconnectFinished();
       await pending.refreshStarted();
 
-      await expect(this.page.getByRole("heading", { name: "Connections", level: 1 })).toBeVisible();
+      await expect(
+        this.page.getByRole("heading", { name: "Integrations", level: 1 }),
+      ).toBeVisible();
       await expect(this.page.getByRole("region", { name: "Loading account context" })).toHaveCount(
         0,
       );
@@ -4980,7 +5210,7 @@ class HubUser {
     await expect(this.page.getByRole("status")).toHaveText("GitHub disconnected.");
     await expect(github).toHaveCount(0);
     await this.chooseOrganization(destinationOrganization);
-    await this.openOrganizationSection("Connections");
+    await this.openOrganizationSection("Integrations");
     await expect(this.connectionRow("GitHub")).toBeVisible();
   }
 
@@ -5035,7 +5265,7 @@ class HubUser {
   }
 
   async expectMemberConnectionMutationDenied(): Promise<void> {
-    await this.openOrganizationSection("Connections");
+    await this.openOrganizationSection("Integrations");
     await expect(this.page.getByRole("button", { name: /Connect|Revoke/u })).toHaveCount(0);
   }
 
@@ -5045,8 +5275,8 @@ class HubUser {
    * the same thing to a reader who can do nothing about any of them.
    */
   async expectNotConfiguredConnections(): Promise<void> {
-    await this.openOrganizationSection("Connections");
-    await expect(this.page.getByText("No connections", { exact: true })).toBeVisible();
+    await this.openOrganizationSection("Integrations");
+    await expect(this.page.getByText("No integrations", { exact: true })).toBeVisible();
     await expect(this.page.getByText(/no provider apps set up yet/u)).toBeVisible();
     await expect(this.page.getByRole("button", { name: /Connect|Revoke|Set up the/u })).toHaveCount(
       0,
@@ -5056,19 +5286,19 @@ class HubUser {
   }
 
   async expectGitHubApprovalRequired(): Promise<void> {
-    await this.openOrganizationSection("Connections");
+    await this.openOrganizationSection("Integrations");
     await this.requestGitHubApproval();
     await this.requestGitHubApproval();
     await this.expectNoConnections();
   }
 
+  /** A member who is not an owner can only ask an owner to install the App. */
   private async requestGitHubApproval(): Promise<void> {
     const connectionsUrl = this.page.url();
-    const returned = this.page.waitForResponse((response) =>
-      response.url().includes("/api/integrations/github/setup?"),
-    );
+    const github = new GitHubConnectFlow(this.page);
     await this.page.getByRole("button", { name: "Connect GitHub" }).click();
-    await returned;
+    await github.authorizeWhenAsked();
+    await github.requestFor("acme-inc");
     await expect(this.page).toHaveURL(connectionsUrl);
     await this.expectConnectionFailure(
       "A GitHub organization owner has to approve this installation. Nothing was connected. Ask an owner to approve the request, then install again.",
@@ -5076,7 +5306,7 @@ class HubUser {
   }
 
   async expectSuspendedGitHubConnection(): Promise<void> {
-    await this.openOrganizationSection("Connections");
+    await this.openOrganizationSection("Integrations");
     const github = this.connectionRow("GitHub");
     await expect(github.getByText("Suspended", { exact: true })).toBeVisible();
     await expect(this.page.getByRole("button", { name: "Reconnect GitHub" })).toBeVisible();
@@ -5251,7 +5481,7 @@ class HubUser {
 
   /**
    * Reaches an organization surface by whichever route the information architecture puts it on:
-   * Projects, Daemons, and Connections are sidebar entries, the administration sections are tabs
+   * Projects, Daemons, and Integrations are sidebar entries, the administration sections are tabs
    * under Settings. Callers name the destination, not the path to it.
    */
   private async openOrganizationSection(
@@ -5291,7 +5521,7 @@ class HubUser {
     await expect(this.page.getByRole("heading", { name: "Home" })).toBeVisible();
   }
 
-  private async refreshOrganizationSection(name: "Daemons" | "Connections" | "Team") {
+  private async refreshOrganizationSection(name: "Daemons" | "Integrations" | "Team") {
     await this.openOrganizationSection("Triggers");
     await this.openOrganizationSection(name);
     await this.page.reload();
@@ -5303,7 +5533,7 @@ class HubUser {
   }
 
   /** No provider lists any connection, whatever the reason there is nothing to list. */
-  private async expectNoConnections(): Promise<void> {
+  async expectNoConnections(): Promise<void> {
     await expect(this.page.getByRole("list", { name: /^\w+ connections$/u })).toHaveCount(0);
   }
 

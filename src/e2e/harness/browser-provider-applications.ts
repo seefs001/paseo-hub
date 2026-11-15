@@ -20,13 +20,12 @@ import {
 import {
   BrowserDiscordBot,
   BrowserDiscordConnections,
-  BrowserGitHubAuth,
-  BrowserGitHubConnections,
   BrowserGitHubConfiguration,
   BrowserGitHubReactions,
   BrowserSlackBot,
   type BrowserProviderScenario,
 } from "./browser-providers.js";
+import { type FakeGitHub, fakeGitHubConnectionClient } from "../../test-utils/fake-github.js";
 
 /**
  * The credentials the fixture providers accept. A browser journey types exactly these to make
@@ -226,6 +225,7 @@ export interface BrowserProviderApplicationFixtures {
   bot: BrowserDiscordBot;
   slackBot: BrowserSlackBot;
   githubConfiguration: BrowserGitHubConfiguration;
+  github: FakeGitHub;
   slackSocket: BrowserSlackSocketFixture;
 }
 
@@ -238,10 +238,6 @@ export function browserRegistrationFactory(fixtures: BrowserProviderApplicationF
   // These clients model the provider, not one Hub registration. Connection starts use a
   // short-lived registration while callbacks may be handled by the active or reconstructed
   // registration, so the provider-side authorization state must outlive either one.
-  const githubConnections = new BrowserGitHubConnections(
-    fixtures.applicationBaseUrl,
-    fixtures.scenario,
-  );
   const discordConnections = new BrowserDiscordConnections(
     fixtures.applicationBaseUrl,
     fixtures.scenario,
@@ -272,8 +268,8 @@ export function browserRegistrationFactory(fixtures: BrowserProviderApplicationF
       return createGitHubRegistration({
         ...shared,
         configuration,
-        appAuth: new BrowserGitHubAuth(),
-        connectionClient: githubConnections,
+        appAuth: fixtures.github.appAuth,
+        connectionClient: fakeGitHubConnectionClient(fixtures.github, input.callbackOrigin),
         configurationProvider: fixtures.githubConfiguration,
         reactionClient: new BrowserGitHubReactions(),
       });

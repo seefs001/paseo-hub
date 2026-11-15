@@ -382,6 +382,7 @@ export type ConnectionProvider = "github" | "discord" | "slack" | "linear" | "te
 export type ConnectionAttemptPhase =
   | "github_setup"
   | "github_user_authorization"
+  | "github_selection"
   | "discord_authorization"
   | "slack_authorization"
   | "linear_authorization"
@@ -408,6 +409,8 @@ export interface ConnectionAttemptRecord {
   sessionId: string;
   candidateExternalId: string | null;
   pkceVerifier: string | null;
+  /** The GitHub accounts offered in `github_selection`, as the GitHub module stored them. */
+  installationChoices: unknown;
   configurationVersion: number;
   providerApplicationId: string | null;
   callbackOrigin: string;
@@ -487,6 +490,8 @@ export interface StartConnectionAttemptInput {
   provider: ConnectionProvider;
   stateVerifier: string;
   access: ConnectionStartAuthority;
+  /** Set when the attempt opens with a PKCE authorization, as GitHub's does. */
+  pkceVerifier?: string;
   lifetimeMinutes: number;
   configurationVersion: number;
   providerApplicationId: string;
@@ -502,10 +507,18 @@ export interface ReadConnectionAttemptInput {
   access: ConnectionAccountAccess;
 }
 
+/** Where a GitHub attempt goes next. Every step issues a new state, so an old link stops working. */
+export type GitHubConnectionAttemptStep =
+  /** Off to GitHub's install page. */
+  | { phase: "github_setup" }
+  /** Off to GitHub's authorize page, with the installation GitHub just reported, if any. */
+  | { phase: "github_user_authorization"; installationId: number | null; pkceVerifier: string }
+  /** On Hub's chooser, offering the accounts verified for this person. */
+  | { phase: "github_selection"; installationChoices: unknown };
+
 export interface AdvanceGitHubConnectionAttemptInput extends ReadConnectionAttemptInput {
   nextStateVerifier: string;
-  installationId: number;
-  pkceVerifier: string;
+  next: GitHubConnectionAttemptStep;
 }
 
 export type GitHubRepositorySnapshot = Pick<
@@ -1007,6 +1020,18 @@ export interface OperatorOrganizationRecord {
   id: string;
   name: string;
   slug: string;
+  createdAt: Date;
+}
+
+/** A member of an organization as the instance-operator surface sees it, for telling apart
+ * organizations that share a name. */
+export interface OperatorMemberRecord {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: "owner" | "admin" | "member";
+  joinedAt: Date;
 }
 
 export interface StampOrganizationEntitlementsInput {
@@ -1575,6 +1600,11 @@ export interface Database {
    * the operator flag at the caller. Undefined when no organization has that slug.
    */
   findOrganizationForOperator(slug: string): Promise<OperatorOrganizationRecord | undefined>;
+  /**
+   * An organization's members, owners first, without any membership check on the caller. The
+   * operator support path; gate on the operator flag at the caller.
+   */
+  listOrganizationMembersForOperator(organizationId: string): Promise<OperatorMemberRecord[]>;
   findOrganizationSlugById(organizationId: string): Promise<string | undefined>;
   /**
    * Single atomic conditional upsert: increments `used` by `amount` and returns the new

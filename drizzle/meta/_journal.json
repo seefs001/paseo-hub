@@ -358,6 +358,13 @@
       "when": 1793616484998,
       "tag": "0050_telegram_and_conversation_choices",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1794763919757,
+      "tag": "0051_github_installation_choices",
+      "breakpoints": true
     }
   ]
 }

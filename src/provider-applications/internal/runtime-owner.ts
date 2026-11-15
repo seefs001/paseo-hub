@@ -12,6 +12,7 @@ import { createDiscordRegistration } from "../../providers/discord/index.js";
 import { discordReplyOutputTool } from "../../triggers/discord/reply.js";
 import { DISCORD_EVENT_SOURCES } from "../../triggers/discord/provider.js";
 import { createGitHubRegistration } from "../../providers/github/index.js";
+import { GITHUB_CONNECTION_ACTIONS } from "../../providers/github/connection.js";
 import { createLinearRegistration } from "../../providers/linear/index.js";
 import type {
   ProviderRegistration,
@@ -580,7 +581,8 @@ export class DynamicProviderRuntime implements ProviderRuntimeOwner {
     action: string,
     request: Request,
   ): Promise<ActiveRegistration | undefined> {
-    if (action !== "callback" && action !== "setup") return slot.active;
+    // An action that continues an attempt carries its state, and belongs to the registration
+    // that started it, even if the operator has saved a new configuration since.
     const state = new URL(request.url).searchParams.get("state");
     if (state === null) return slot.active;
     const snapshot = await this.options.database.findConnectionAttemptConfiguration(
@@ -638,7 +640,7 @@ function emptySlot(): Slot {
 }
 
 function actionNames(provider: Provider): readonly string[] {
-  if (provider === "github") return ["start", "disconnect", "setup", "callback"];
+  if (provider === "github") return GITHUB_CONNECTION_ACTIONS;
   if (provider === "telegram") return ["start", "disconnect"];
   return ["start", "disconnect", "callback"];
 }
