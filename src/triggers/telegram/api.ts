@@ -52,8 +52,35 @@ const TelegramPhotoSizeSchema = z.object({
   file_size: z.number().int().optional(),
 });
 
-interface TelegramMessageShape {
+const TelegramStickerSchema = TelegramFileSchema.extend({
+  is_animated: z.boolean(),
+  is_video: z.boolean(),
+  thumbnail: TelegramPhotoSizeSchema.optional(),
+});
+
+const TelegramMediaSchema = z.object({
+  document: TelegramFileSchema.optional(),
+  photo: z.array(TelegramPhotoSizeSchema).optional(),
+  audio: TelegramFileSchema.optional(),
+  video: TelegramFileSchema.optional(),
+  voice: TelegramFileSchema.optional(),
+  video_note: TelegramFileSchema.optional(),
+  sticker: TelegramStickerSchema.optional(),
+});
+
+const TelegramExternalReplySchema = TelegramMediaSchema.extend({
+  origin: z.object({ date: z.number().int() }).loose(),
+  chat: TelegramChatSchema.optional(),
+  message_id: z.number().int().optional(),
+});
+
+type TelegramMedia = z.infer<typeof TelegramMediaSchema>;
+
+interface TelegramMessageShape extends TelegramMedia {
   message_id: number;
+  media_group_id?: string | undefined;
+  external_reply?: z.infer<typeof TelegramExternalReplySchema> | undefined;
+  quote?: { text: string } | undefined;
   message_thread_id?: number | undefined;
   is_topic_message?: boolean | undefined;
   from?: z.infer<typeof TelegramUserSchema> | undefined;
@@ -65,17 +92,15 @@ interface TelegramMessageShape {
   entities?: z.infer<typeof TelegramEntitySchema>[] | undefined;
   caption_entities?: z.infer<typeof TelegramEntitySchema>[] | undefined;
   reply_to_message?: TelegramMessageShape | undefined;
-  document?: z.infer<typeof TelegramFileSchema> | undefined;
-  photo?: z.infer<typeof TelegramPhotoSizeSchema>[] | undefined;
-  audio?: z.infer<typeof TelegramFileSchema> | undefined;
-  video?: z.infer<typeof TelegramFileSchema> | undefined;
-  voice?: z.infer<typeof TelegramFileSchema> | undefined;
   migrate_to_chat_id?: number | undefined;
 }
 
 export const TelegramMessageSchema: z.ZodType<TelegramMessageShape> = z.lazy(() =>
   z.object({
     message_id: z.number().int(),
+    media_group_id: z.string().optional(),
+    external_reply: TelegramExternalReplySchema.optional(),
+    quote: z.object({ text: z.string() }).optional(),
     message_thread_id: z.number().int().optional(),
     is_topic_message: z.boolean().optional(),
     from: TelegramUserSchema.optional(),
@@ -87,11 +112,7 @@ export const TelegramMessageSchema: z.ZodType<TelegramMessageShape> = z.lazy(() 
     entities: z.array(TelegramEntitySchema).optional(),
     caption_entities: z.array(TelegramEntitySchema).optional(),
     reply_to_message: TelegramMessageSchema.optional(),
-    document: TelegramFileSchema.optional(),
-    photo: z.array(TelegramPhotoSizeSchema).optional(),
-    audio: TelegramFileSchema.optional(),
-    video: TelegramFileSchema.optional(),
-    voice: TelegramFileSchema.optional(),
+    ...TelegramMediaSchema.shape,
     migrate_to_chat_id: z.number().int().optional(),
   }),
 );

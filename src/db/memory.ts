@@ -3428,7 +3428,12 @@ class MemoryDatabase implements Database {
   recordTelegramMessages(messages: readonly TelegramMessageRecord[]): Promise<void> {
     for (const message of messages) {
       const key = `${message.chatId}:${String(message.messageId)}`;
-      if (!this.telegramMessages.has(key)) this.telegramMessages.set(key, { ...message });
+      const existing = this.telegramMessages.get(key);
+      if (existing === undefined) {
+        this.telegramMessages.set(key, { ...message });
+      } else if (existing.attachments.length === 0 && message.attachments.length > 0) {
+        this.telegramMessages.set(key, { ...existing, attachments: [...message.attachments] });
+      }
     }
     return Promise.resolve();
   }

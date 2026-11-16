@@ -8,7 +8,7 @@ import type { Database } from "../../db/types.js";
 import type { OutputExecutor } from "../../execution-capabilities/outputs.js";
 import type { TelegramBotApi, TelegramInlineButton, TelegramMessage, TelegramUser } from "./api.js";
 import { telegramConversationKey } from "./events.js";
-import { author } from "./source.js";
+import { attachmentsOf, author } from "./source.js";
 
 /** Rich messages hold 32768 characters; a reply is split at paragraphs below that. */
 const MAX_RICH_MESSAGE_LENGTH = 32_000;
@@ -92,7 +92,7 @@ export function createTelegramReplyExecutor(options: {
           authorUsername: bot.username,
           fromBot: true,
           text: chunks[index] ?? "",
-          attachments: [],
+          attachments: attachmentsOf(message),
           createdAt: new Date(message.date * 1_000),
         })),
       );

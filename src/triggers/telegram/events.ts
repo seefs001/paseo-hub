@@ -15,6 +15,13 @@ export const TelegramAttachmentSchema = z.object({
   size: z.number().int().nonnegative().nullable(),
 });
 
+const TelegramExternalReplySchema = z.object({
+  chatId: z.string().nullable(),
+  messageId: z.number().int().nullable(),
+  text: z.string(),
+  attachments: z.array(TelegramAttachmentSchema),
+});
+
 export const NormalizedTelegramEventSchema = z.object({
   /**
    * `mention` addresses the bot; `thread_message` is an unaddressed message in a conversation
@@ -28,7 +35,7 @@ export const NormalizedTelegramEventSchema = z.object({
   /** The forum topic, when the chat has topics. */
   topicId: z.number().int().nullable(),
   messageId: z.number().int(),
-  /** `topic:<id>`, `root:<message id>` for a reply chain, or `chat` for a private chat. */
+  /** `topic:<id>`, `root:<message id>`, `album:<media group id>`, or `chat` for a private chat. */
   conversationId: z.string(),
   replyToMessageId: z.number().int().nullable(),
   /** The message text with the bot's mention or command removed. */
@@ -37,6 +44,7 @@ export const NormalizedTelegramEventSchema = z.object({
   author: TelegramAuthorSchema,
   createdAt: z.string(),
   attachments: z.array(TelegramAttachmentSchema),
+  externalReply: TelegramExternalReplySchema.optional(),
   reaction: z.object({ emoji: z.string(), user: TelegramAuthorSchema }).optional(),
   choice: ChoiceSelectionSchema.optional(),
 });

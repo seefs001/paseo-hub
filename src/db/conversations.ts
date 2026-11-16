@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, lt } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lt, sql } from "drizzle-orm";
 import type { DatabaseRuntime, DrizzleHandle } from "./runtime/index.js";
 import * as schema from "./schema.js";
 import type {
@@ -22,7 +22,11 @@ export class ConversationRepository {
     await this.database
       .insert(schema.telegramMessages)
       .values(messages.map((message) => ({ ...message })))
-      .onConflictDoNothing();
+      .onConflictDoUpdate({
+        target: [schema.telegramMessages.chatId, schema.telegramMessages.messageId],
+        set: { attachments: sql`excluded.attachments` },
+        setWhere: sql`jsonb_array_length(${schema.telegramMessages.attachments}) = 0 and jsonb_array_length(excluded.attachments) > 0`,
+      });
   }
 
   async findTelegramMessage(

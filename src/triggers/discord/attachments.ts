@@ -34,7 +34,10 @@ function readDiscordAttachmentUrl(input: AttachmentResolverInput): URL {
     url.username.length > 0 ||
     url.password.length > 0 ||
     !DISCORD_ATTACHMENT_HOSTS.has(url.hostname) ||
-    !url.pathname.startsWith("/attachments/")
+    !(
+      url.pathname.startsWith("/attachments/") ||
+      /^\/stickers\/\d+\.(?:png|json|gif)$/u.test(url.pathname)
+    )
   ) {
     throw new Error("invalid Discord attachment URL");
   }

@@ -1,4 +1,5 @@
 import type { Message } from "discord.js";
+import { normalizeDiscordAttachments } from "./message-attachments.js";
 import {
   choiceClickNotice,
   choiceResolutionText,
@@ -120,7 +121,7 @@ export function normalizeMessage(
       bot: message.author.bot,
     },
     createdAt: message.createdAt.toISOString(),
-    attachments: normalizeAttachments(message),
+    attachments: normalizeDiscordAttachments(message),
     referencedMessage: normalizeReferencedMessage(message),
   });
 }
@@ -262,16 +263,6 @@ function isBotThread(message: Message, botUserId: string): boolean {
   return (
     typeof channel.isThread === "function" && channel.isThread() && channel.ownerId === botUserId
   );
-}
-
-function normalizeAttachments(message: Message) {
-  return Array.from(message.attachments.values(), (attachment) => ({
-    id: attachment.id,
-    filename: attachment.name,
-    url: attachment.url,
-    contentType: attachment.contentType,
-    size: attachment.size,
-  }));
 }
 
 function normalizeReferencedMessage(message: Message) {

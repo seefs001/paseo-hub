@@ -84,6 +84,8 @@ export interface TelegramTriggerContext {
   organizationId: string;
   target: TelegramOutputContext;
   event: TelegramMergeData;
+  /** Telegram may include media from another chat without a local transcript row. */
+  externalReply?: NormalizedTelegramEvent["externalReply"];
 }
 
 export interface TelegramMaterializedMessage extends TelegramMergeMessage {
@@ -95,6 +97,12 @@ export interface TelegramMaterializedContext {
     reply_to_message: TelegramMaterializedMessage | null;
     conversation: { messages: TelegramMaterializedMessage[] };
     trigger_attachments: AttachmentDescriptor[];
+    external_reply?: {
+      chat_id: string | null;
+      message_id: number | null;
+      text: string;
+      attachments: AttachmentDescriptor[];
+    };
   };
 }
 
@@ -172,6 +180,7 @@ export function createTelegramTriggerProvider(options: {
         organizationId: externalTrigger.organizationId,
         target: outputContext,
         event: buildTelegramMergeData(event, externalTrigger.connectionId ?? null),
+        ...(event.externalReply === undefined ? {} : { externalReply: event.externalReply }),
       };
       const matches = invocationMatches(stored, event, externalTrigger.connectionId, {
         triggerContext,
@@ -210,8 +219,22 @@ export function createTelegramTriggerProvider(options: {
           : (transcript.find((message) => message.messageId === replyToId) ??
             (await options.database.findTelegramMessage(target.chatId, replyToId)));
       const trigger = await options.database.findTelegramMessage(target.chatId, target.messageId);
+      const external = launch.triggerContext.externalReply;
+      const externalReply =
+        external === undefined
+          ? undefined
+          : {
+              chat_id: external.chatId,
+              message_id: external.messageId,
+              text: external.text,
+              attachments: await register(
+                external.attachments,
+                `external-${String(target.messageId)}`,
+              ),
+            };
       return {
         telegram: {
+          ...(externalReply === undefined ? {} : { external_reply: externalReply }),
           reply_to_message:
             replyTo === undefined ? null : await materializeMessage(replyTo, register),
           conversation: { messages },

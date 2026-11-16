@@ -14,6 +14,7 @@ import { Routes } from "discord-api-types/v10";
 import { reportFailure } from "../../failures/index.js";
 import { DiscordSnowflakeSchema } from "../../discord/snowflake.js";
 import { NormalizedDiscordContextMessageSchema } from "./events.js";
+import { normalizeDiscordAttachments } from "./message-attachments.js";
 import type { NormalizedDiscordContextMessage } from "./events.js";
 
 type DiscordGatewayFailure =
@@ -583,13 +584,7 @@ function normalizeContextMessage(message: Message): NormalizedDiscordContextMess
       bot: message.author.bot,
     },
     createdAt: message.createdAt.toISOString(),
-    attachments: Array.from(message.attachments.values(), (attachment) => ({
-      id: attachment.id,
-      filename: attachment.name,
-      url: attachment.url,
-      contentType: attachment.contentType,
-      size: attachment.size,
-    })),
+    attachments: normalizeDiscordAttachments(message),
     referencedMessage:
       message.reference === null || message.reference.messageId === undefined
         ? null

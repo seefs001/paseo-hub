@@ -25,6 +25,13 @@ import {
   type TelegramAuthor,
 } from "./events.js";
 
+import {
+  createTelegramAlbumCollector,
+  groupTelegramUpdates,
+  hasTelegramAlbum,
+  TELEGRAM_ALBUM_WINDOW_MS,
+} from "./albums.js";
+
 const POLL_TIMEOUT_SECONDS = 30;
 const POLL_RETRY_MS = 5_000;
 const WEBHOOK_SECRET_HEADER = "x-telegram-bot-api-secret-token";
@@ -66,11 +73,35 @@ export function createTelegramSource(options: CreateTelegramSourceOptions): Tele
   let polling: AbortController | undefined;
   let pollLoop: Promise<void> | undefined;
   let started = false;
+  const webhookRequests = new Set<Promise<void>>();
 
+  const albums = createTelegramAlbumCollector(async (updates) => {
+    const bot = await options.identity();
+    const anchor =
+      updates.find(
+        (update) =>
+          update.message !== undefined && findBotMention(update.message, bot) !== undefined,
+      ) ?? updates[0];
+    if (anchor === undefined) return;
+    const messages = updates.flatMap((update) =>
+      update.message === undefined ? [] : [update.message],
+    );
+    const replyTo =
+      anchor.message?.reply_to_message ??
+      messages.find((message) => message.reply_to_message !== undefined)?.reply_to_message;
+    const selected =
+      anchor.message === undefined || replyTo === undefined
+        ? anchor
+        : {
+            ...anchor,
+            message: { ...anchor.message, reply_to_message: replyTo },
+          };
+    await processUpdate(selected, bot, handlers, options, messages);
+  });
   const process = async (raw: unknown): Promise<void> => {
     const parsed = TelegramUpdateSchema.safeParse(raw);
     if (!parsed.success) return;
-    await processUpdate(parsed.data, await options.identity(), handlers, options);
+    await albums.accept(parsed.data);
   };
 
   return {
@@ -92,12 +123,17 @@ export function createTelegramSource(options: CreateTelegramSourceOptions): Tele
       pollLoop = poll(options.api, controller.signal, process);
     },
     async stop() {
-      handlers.clear();
       started = false;
       polling?.abort();
       polling = undefined;
-      await pollLoop;
-      pollLoop = undefined;
+      try {
+        await albums.flush();
+        await Promise.allSettled(webhookRequests);
+        await pollLoop;
+      } finally {
+        handlers.clear();
+        pollLoop = undefined;
+      }
     },
     async handleWebhook(request) {
       if (options.transport.kind !== "webhook" || !started) {
@@ -106,9 +142,17 @@ export function createTelegramSource(options: CreateTelegramSourceOptions): Tele
       if (request.headers.get(WEBHOOK_SECRET_HEADER) !== options.transport.secretToken) {
         return new Response("Unauthorized", { status: 401 });
       }
-      const body: unknown = await request.json().catch(() => undefined);
-      await process(body);
-      return new Response(null, { status: 200 });
+      const processing = request
+        .json()
+        .catch(() => undefined)
+        .then(process);
+      webhookRequests.add(processing);
+      try {
+        await processing;
+        return new Response(null, { status: 200 });
+      } finally {
+        webhookRequests.delete(processing);
+      }
     },
   };
 }
@@ -121,23 +165,36 @@ async function poll(
   let offset = 0;
   while (!signal.aborted) {
     try {
-      const updates = await api.getUpdates({
+      let updates = await api.getUpdates({
         offset,
         timeoutSeconds: POLL_TIMEOUT_SECONDS,
         signal,
       });
-      for (const update of updates) {
-        const updateId = readUpdateId(update);
-        try {
-          await process(update);
-        } catch (error) {
-          reportFailure(error, {
-            operation: "telegram.update.process",
-            component: "triggers",
-            provider: "telegram",
-          });
-        }
-        if (updateId !== undefined) offset = Math.max(offset, updateId + 1);
+      if (hasTelegramAlbum(updates)) {
+        // Read again at the same offset: the first batch remains unacknowledged while collecting.
+        await delay(TELEGRAM_ALBUM_WINDOW_MS, signal);
+        if (signal.aborted) return;
+        const more = await api.getUpdates({ offset, timeoutSeconds: 0, signal });
+        const unique = new Map(updates.map((update) => [readUpdateId(update), update]));
+        for (const update of more) unique.set(readUpdateId(update), update);
+        updates = [...unique.values()];
+      }
+      for (const group of groupTelegramUpdates(updates)) {
+        await Promise.all(
+          group.map(async (update) => {
+            try {
+              await process(update);
+            } catch (error) {
+              reportFailure(error, {
+                operation: "telegram.update.process",
+                component: "triggers",
+                provider: "telegram",
+              });
+            }
+            const updateId = readUpdateId(update);
+            if (updateId !== undefined) offset = Math.max(offset, updateId + 1);
+          }),
+        );
       }
     } catch (error) {
       if (signal.aborted) return;
@@ -156,9 +213,10 @@ async function processUpdate(
   bot: TelegramUser,
   handlers: Set<TriggerHandler>,
   options: CreateTelegramSourceOptions,
+  album: readonly TelegramMessage[],
 ): Promise<void> {
   if (update.message !== undefined) {
-    await processMessage(update.update_id, update.message, bot, handlers, options);
+    await processMessage(update.update_id, update.message, bot, handlers, options, album);
     return;
   }
   if (update.message_reaction !== undefined) {
@@ -181,6 +239,7 @@ async function processMessage(
   bot: TelegramUser,
   handlers: Set<TriggerHandler>,
   options: CreateTelegramSourceOptions,
+  album: readonly TelegramMessage[],
 ): Promise<void> {
   if (message.migrate_to_chat_id !== undefined) {
     await options.database.moveTelegramConnection(
@@ -232,9 +291,12 @@ async function processMessage(
     text,
     author: author(from),
     createdAt: new Date(message.date * 1_000).toISOString(),
-    attachments: attachmentsOf(message),
+    attachments: album.flatMap(attachmentsOf),
+    ...externalReplyOf(message),
   } satisfies NormalizedTelegramEvent);
-  await options.database.recordTelegramMessages([transcriptRecord(event, connection)]);
+  await options.database.recordTelegramMessages(
+    transcriptRecords(event, connection, [message.reply_to_message, ...album]),
+  );
   await deliver(
     event,
     type === "mention" ? "telegram.mention" : "telegram.thread_message",
@@ -381,7 +443,7 @@ async function deliver(
   }
 }
 
-/** Where a message sits: its forum topic, its reply chain, or the whole private chat. */
+/** Where a message sits: its topic, existing reply chain, album, or the whole private chat. */
 async function conversationOf(
   message: TelegramMessage,
   database: SourceDatabase,
@@ -399,6 +461,21 @@ async function conversationOf(
     return { conversationId, known: earlier.length > 0 };
   }
   if (message.chat.type === "private") return { conversationId: "chat", known: true };
+  if (message.media_group_id !== undefined) {
+    const parent =
+      message.reply_to_message === undefined
+        ? undefined
+        : await database.findTelegramMessage(chatId, message.reply_to_message.message_id);
+    if (parent !== undefined) return { conversationId: parent.conversationId, known: true };
+    const conversationId = `album:${message.media_group_id}`;
+    const earlier = await database.listTelegramConversation({
+      chatId,
+      conversationId,
+      beforeMessageId: Number.MAX_SAFE_INTEGER,
+      limit: 1,
+    });
+    return { conversationId, known: earlier.length > 0 };
+  }
   const replyTo = message.reply_to_message;
   if (replyTo === undefined) {
     return { conversationId: `root:${String(message.message_id)}`, known: false };
@@ -461,7 +538,12 @@ function readStartState(text: string, bot: TelegramUser): string | undefined {
   return match[2];
 }
 
-function attachmentsOf(message: TelegramMessage): TelegramAttachment[] {
+export function attachmentsOf(
+  message: Pick<
+    TelegramMessage,
+    "message_id" | "document" | "photo" | "audio" | "video" | "voice" | "sticker" | "video_note"
+  >,
+): TelegramAttachment[] {
   const files: TelegramAttachment[] = [];
   const add = (
     file: { file_id: string; file_unique_id: string; file_size?: number | undefined } | undefined,
@@ -479,6 +561,20 @@ function attachmentsOf(message: TelegramMessage): TelegramAttachment[] {
   };
   const largestPhoto = message.photo?.at(-1);
   add(largestPhoto, `photo-${String(message.message_id)}.jpg`, "image/jpeg");
+  const sticker = message.sticker;
+  if (sticker !== undefined) {
+    let format = { extension: "webp", contentType: "image/webp" };
+    if (sticker.is_animated) {
+      format = { extension: "tgs", contentType: "application/x-tgsticker" };
+    } else if (sticker.is_video) {
+      format = { extension: "webm", contentType: "video/webm" };
+    }
+    add(sticker, `sticker-${String(message.message_id)}.${format.extension}`, format.contentType);
+    if (sticker.is_animated || sticker.is_video) {
+      // Telegram thumbnails may be JPEG or WebP; leave the type for the downloaded bytes.
+      add(sticker.thumbnail, `sticker-${String(message.message_id)}-thumbnail`, null);
+    }
+  }
   for (const [kind, file] of [
     ["document", message.document],
     ["audio", message.audio],
@@ -487,7 +583,21 @@ function attachmentsOf(message: TelegramMessage): TelegramAttachment[] {
   ] as const) {
     add(file, file?.file_name ?? `${kind}-${String(message.message_id)}`, file?.mime_type ?? null);
   }
+  add(message.video_note, `video-note-${String(message.message_id)}.mp4`, "video/mp4");
   return files;
+}
+
+function externalReplyOf(message: TelegramMessage): Pick<NormalizedTelegramEvent, "externalReply"> {
+  const reply = message.external_reply;
+  if (reply === undefined) return {};
+  return {
+    externalReply: {
+      chatId: reply.chat === undefined ? null : String(reply.chat.id),
+      messageId: reply.message_id ?? null,
+      text: message.quote?.text ?? "",
+      attachments: attachmentsOf({ ...reply, message_id: reply.message_id ?? message.message_id }),
+    },
+  };
 }
 
 function emojiOf(reaction: TelegramUpdateReaction): string[] {
@@ -520,6 +630,36 @@ export function chatTitle(chat: TelegramChat): string {
     chat.username ??
     ([chat.first_name, chat.last_name].filter(Boolean).join(" ") || String(chat.id))
   );
+}
+
+function transcriptRecords(
+  event: NormalizedTelegramEvent,
+  connection: TelegramConnectionRecord,
+  related: readonly (TelegramMessage | undefined)[],
+): TelegramMessageRecord[] {
+  const records = [transcriptRecord(event, connection)];
+  const seen = new Set([event.messageId]);
+  for (const replyTo of related) {
+    if (replyTo?.from === undefined || seen.has(replyTo.message_id)) continue;
+    seen.add(replyTo.message_id);
+    // Keep only explicit references and the members of this addressed album.
+    const replyAuthor = author(replyTo.from);
+    records.unshift({
+      connectionId: connection.id,
+      chatId: String(replyTo.chat.id),
+      messageId: replyTo.message_id,
+      conversationId: event.conversationId,
+      topicId: topicOf(replyTo),
+      replyToMessageId: replyTo.reply_to_message?.message_id ?? null,
+      authorId: replyAuthor.id,
+      authorUsername: replyAuthor.username,
+      fromBot: replyAuthor.bot,
+      text: replyTo.text ?? replyTo.caption ?? "",
+      attachments: attachmentsOf(replyTo),
+      createdAt: new Date(replyTo.date * 1_000),
+    });
+  }
+  return records;
 }
 
 export function transcriptRecord(

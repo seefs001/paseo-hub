@@ -26,7 +26,7 @@ export interface DiscordAttachmentLocator {
   id: string;
   filename: string;
   contentType: string | null;
-  size: number;
+  size: number | null;
 }
 
 export interface DiscordMergeMessage {
@@ -51,6 +51,7 @@ export interface DiscordMaterializedMessage {
 
 export interface DiscordMaterializedContext {
   discord: {
+    trigger_attachments?: AttachmentDescriptor[];
     referenced_message: DiscordMaterializedMessage | null;
     thread: {
       id: string;
@@ -239,8 +240,32 @@ export function createDiscordTriggerProvider(options: {
         options.attachments,
         event.connection_id,
       );
+      const coveredIds = new Set(
+        messages.flatMap((message) => message.attachments.map((file) => file.id)),
+      );
+      const uncovered = event.trigger_message.attachments.filter(
+        (file) => !coveredIds.has(file.id),
+      );
+      let triggerAttachments: AttachmentDescriptor[] = [];
+      if (uncovered.length > 0) {
+        // Durable trigger locators omit expiring CDN URLs; resolve the current message on demand.
+        const current = await options.bot.readMessage({
+          channelId: event.trigger_message.channel.id,
+          messageId: event.trigger_message.id,
+        });
+        const ids = new Set(uncovered.map((file) => file.id));
+        triggerAttachments = await registerAttachments(
+          current.attachments.filter((file) => ids.has(file.id)),
+          launch.providerEventReceiptId,
+          launch.organizationId,
+          event.connection_id,
+          launch.executionId,
+          options.attachments,
+        );
+      }
       return {
         discord: {
+          ...(triggerAttachments.length === 0 ? {} : { trigger_attachments: triggerAttachments }),
           referenced_message: referencedMessage,
           thread:
             event.trigger_message.thread === null

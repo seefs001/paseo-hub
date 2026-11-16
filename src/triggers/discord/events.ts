@@ -13,7 +13,7 @@ export const DiscordMessageAttachmentSchema = z.object({
   filename: z.string(),
   url: z.url(),
   contentType: z.string().nullable(),
-  size: z.number().int().nonnegative(),
+  size: z.number().int().nonnegative().nullable(),
 });
 
 export const DiscordReferencedMessageSchema = z.object({
