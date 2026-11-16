@@ -64,7 +64,14 @@ function ConnectDaemonHint() {
   return (
     <>
       {origin === undefined ? null : (
-        <CopyField label="Command" value={daemonLoginCommand(origin)} />
+        <>
+          <CopyField label="Command" value={daemonLoginCommand(origin)} />
+          <CopyField
+            label="DeepSeek Harness: open Paseo Hub in its sidebar and sign in with"
+            copyLabel="Copy Hub address"
+            value={origin}
+          />
+        </>
       )}
       <Button asChild variant="outline" size="sm">
         <a href={DAEMON_DOCS_URL} target="_blank" rel="noreferrer">

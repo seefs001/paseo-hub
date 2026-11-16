@@ -181,7 +181,7 @@ describe("organization trigger store", () => {
         yaml: triggerYaml(true).replace("provider: codex", "provider: omp"),
         userId: null,
       }),
-      /run\.agent\.provider: Provider 'omp' cannot run unattended Hub automations; select Claude, Codex, OpenCode, or Pi/u,
+      /run\.agent\.provider: Provider 'omp' cannot run unattended Hub automations; select Claude, Codex, OpenCode, Pi, or DeepSeek Harness/u,
     );
   });
 
