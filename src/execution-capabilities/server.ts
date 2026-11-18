@@ -17,6 +17,7 @@ import {
   type MaterializedOutputCapability,
   type OutputExecutorRegistry,
   type OutputFile,
+  type OutputToolDefinition,
   type OutputToolSchema,
 } from "./outputs.js";
 
@@ -94,20 +95,23 @@ export function createExecutionCapabilityServer(
         { capabilities: { tools: {} } },
       );
       server.setRequestHandler(ListToolsRequestSchema, () => ({
-        tools: session.tools.map((tool) => ({
-          ...tool,
-          inputSchema: {
-            ...tool.inputSchema,
-            properties: {
-              ...tool.inputSchema.properties,
-              executionId: {
-                type: "string",
-                description: "Execution ID supplied with the request prompt.",
+        tools: session.tools.map((storedTool) => {
+          const tool = advertisedExecutionTool(storedTool);
+          return {
+            ...tool,
+            inputSchema: {
+              ...tool.inputSchema,
+              properties: {
+                ...tool.inputSchema.properties,
+                executionId: {
+                  type: "string",
+                  description: "Execution ID supplied with the request prompt.",
+                },
               },
+              required: [...(tool.inputSchema.required ?? []), "executionId"],
             },
-            required: [...(tool.inputSchema.required ?? []), "executionId"],
-          },
-        })),
+          };
+        }),
       }));
       server.setRequestHandler(CallToolRequestSchema, async (call) => {
         const { executionId, ...args } = call.params.arguments ?? {};
@@ -231,7 +235,10 @@ function createMcpServer(
     { name: "paseo-hub-execution", version: "1.0.0" },
     { capabilities: { tools: {} } },
   );
-  const tools = executionToolDefinitions(execution.launchIntent?.outputSchema, materializedOutputs);
+  const tools = executionToolDefinitions(
+    execution.launchIntent?.outputSchema,
+    materializedOutputs,
+  ).map(advertisedExecutionTool);
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));
   server.setRequestHandler(CallToolRequestSchema, (request) =>
     callExecutionTool(
@@ -244,6 +251,19 @@ function createMcpServer(
     ),
   );
   return server;
+}
+
+function advertisedExecutionTool(tool: OutputToolDefinition): OutputToolDefinition {
+  const properties = tool.inputSchema.properties;
+  const files = properties?.["files"];
+  if (tool.name !== "reply" || files?.["uniqueItems"] !== true) return tool;
+
+  // Some model APIs reject uniqueItems. Keep it in the validation contract and session fingerprint.
+  const { uniqueItems: _uniqueItems, ...advertisedFiles } = files;
+  return {
+    ...tool,
+    inputSchema: { ...tool.inputSchema, properties: { ...properties, files: advertisedFiles } },
+  };
 }
 
 async function callExecutionTool(
