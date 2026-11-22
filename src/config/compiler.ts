@@ -1,7 +1,18 @@
 import { eventDefinition, isEditorEvent } from "../triggers/configuration/events.js";
 import { ContinuationSchema } from "../triggers/continuation.js";
+import {
+  GitHubAuthorAssociationSchema,
+  reportsAuthorAssociation,
+  type GitHubAuthorAssociation,
+} from "../triggers/github/author-association.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import {
+  CompiledIntegrationToolGrantsSchema,
+  IntegrationToolGrantsSchema,
+  normalizeIntegrationToolGrants,
+  type IntegrationToolGrants,
+} from "../integration-tools/grants.js";
 import {
   expressionPaths,
   parseExpression,
@@ -110,6 +121,8 @@ const AuthoredTriggerFilterSchema = z
     /** Discord reactions which start a run: a Unicode emoji, or a custom emoji's name or ID. */
     emojis: z.array(z.string().min(1)).min(1).optional(),
     from_users: z.array(z.string().min(1)).optional(),
+    /** GitHub repository associations whose holders may invoke the trigger. */
+    author_associations: z.array(GitHubAuthorAssociationSchema).min(1).optional(),
     inputs: z.record(z.string(), InputValueSchema).optional(),
     connection: z
       .string()
@@ -184,6 +197,7 @@ const StepSchema = z
     prompt: z.array(PromptBlockSchema).min(1),
     env: z.record(z.string().min(1), z.string()).optional(),
     github: AuthoredGitHubAuthoritySchema.optional(),
+    tools: IntegrationToolGrantsSchema.optional(),
     if: z.string().min(1).optional(),
     output: z.object({ schema: JsonSchemaSchema }).strict().optional(),
     allow_outputs: z.array(AllowOutputSchema).optional(),
@@ -265,6 +279,7 @@ export interface CompiledStep {
   prompt: readonly CompiledPromptBlock[];
   env?: Readonly<Record<string, string>> | undefined;
   github?: CompiledGitHubAuthority | undefined;
+  tools?: IntegrationToolGrants | undefined;
   condition?: Expression | undefined;
   output?: { schema: JsonValue } | undefined;
   allowOutputs: readonly {
@@ -282,11 +297,19 @@ export type CompiledSteps = readonly CompiledStep[];
 export type CompiledTriggerFilter = Readonly<
   Omit<
     AuthoredTriggerFilter,
-    "channels" | "emojis" | "from_users" | "states" | "labels" | "exclude_labels" | "assignees"
+    | "emojis"
+    | "channels"
+    | "from_users"
+    | "author_associations"
+    | "states"
+    | "labels"
+    | "exclude_labels"
+    | "assignees"
   > & {
     channels?: readonly string[] | undefined;
     emojis?: readonly string[] | undefined;
     from_users?: readonly string[] | undefined;
+    author_associations?: readonly GitHubAuthorAssociation[] | undefined;
     states?: readonly string[] | undefined;
     labels?: readonly string[] | undefined;
     exclude_labels?: readonly string[] | undefined;
@@ -423,6 +446,7 @@ const CompiledStepSchema: z.ZodType<CompiledStep> = z
     prompt: z.array(CompiledPromptBlockSchema).min(1),
     env: z.record(z.string(), z.string()).optional(),
     github: CompiledGitHubAuthoritySchema.optional(),
+    tools: CompiledIntegrationToolGrantsSchema.optional(),
     condition: z.custom<Expression>(isExpression).optional(),
     output: z.object({ schema: CompiledJsonSchemaSchema }).strict().optional(),
     allowOutputs: z.array(
@@ -637,6 +661,7 @@ function compileStep(
     prompt: compilePromptBlocks(trigger.name, step.id, step.prompt, resolvedPromptPartials),
     ...(env === undefined ? {} : { env }),
     ...(github === undefined ? {} : { github }),
+    ...(step.tools === undefined ? {} : { tools: normalizeIntegrationToolGrants(step.tools) }),
     ...(condition === undefined ? {} : { condition }),
     ...(outputDeclaration === undefined ? {} : { output: outputDeclaration }),
     allowOutputs: (step.allow_outputs ?? []).map((allowOutput) => {
@@ -1403,7 +1428,24 @@ function validateAuthoredIds(config: AuthoredHubConfig): void {
   }
 }
 
+function validateReactionFilter(trigger: CompiledTrigger): void {
+  // Without an emoji list every reaction, a thumbs-up included, would start a run.
+  if (
+    (trigger.on === "discord.reaction_added" || trigger.on === "telegram.reaction_added") &&
+    (trigger.filters?.emojis?.length ?? 0) === 0
+  ) {
+    throw new Error(`trigger ${trigger.name} requires filters.emojis for ${trigger.on}`);
+  }
+}
+
 function validateTriggerLaunchSecurity(trigger: CompiledTrigger): void {
+  validateReactionFilter(trigger);
+  const associations = trigger.filters?.author_associations;
+  if (associations !== undefined && !reportsAuthorAssociation(trigger.on)) {
+    throw new Error(
+      `trigger ${trigger.name}: filters.author_associations is not available for ${trigger.on}`,
+    );
+  }
   if (isEditorEvent(trigger.on) && eventDefinition(trigger.on).origin === "hub") return;
   // A project scout is an intentionally autonomous, project-scoped policy. Every other
   // externally-originated Linear action remains actor-allowlisted below.
@@ -1415,17 +1457,16 @@ function validateTriggerLaunchSecurity(trigger: CompiledTrigger): void {
     }
     return;
   }
-  if ((trigger.filters?.from_users?.length ?? 0) === 0) {
+  if ((trigger.filters?.from_users?.length ?? 0) > 0) return;
+  if (!reportsAuthorAssociation(trigger.on)) {
     throw new Error(
       `trigger ${trigger.name} requires a non-empty filters.from_users allowlist for externally sourced events`,
     );
   }
-  // Without an emoji list every reaction, a thumbs-up included, would start a run.
-  if (
-    (trigger.on === "discord.reaction_added" || trigger.on === "telegram.reaction_added") &&
-    (trigger.filters?.emojis?.length ?? 0) === 0
-  ) {
-    throw new Error(`trigger ${trigger.name} requires filters.emojis for ${trigger.on}`);
+  if (associations === undefined) {
+    throw new Error(
+      `trigger ${trigger.name} requires a non-empty filters.from_users or filters.author_associations allowlist for externally sourced events`,
+    );
   }
 }
 

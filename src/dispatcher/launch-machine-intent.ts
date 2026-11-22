@@ -1,3 +1,4 @@
+import type { IntegrationToolGrants } from "../integration-tools/grants.js";
 import type { AllowedOutput } from "../execution-capabilities/outputs.js";
 import type { TriggerAgentConfig } from "../triggers/index.js";
 import type { WorktreeTarget } from "../config/index.js";
@@ -28,6 +29,7 @@ export interface LaunchMachineIntent {
   environment: DaemonEnvironmentTarget;
   env?: Readonly<Record<string, string>>;
   github?: CompiledGitHubAuthority;
+  tools?: IntegrationToolGrants;
   /** Authored workspace title, already rendered; absent means Hub's default workspace title. */
   title?: string;
   /** Paseo workspace labels to assign once the agent's workspace exists. */
@@ -58,6 +60,7 @@ export function buildLaunchMachineIntent(input: {
   environment: DaemonEnvironmentTarget;
   env?: Readonly<Record<string, string>>;
   github?: CompiledGitHubAuthority;
+  tools?: IntegrationToolGrants;
   title?: string;
   labels?: readonly string[];
   prompt: string;
@@ -82,6 +85,7 @@ export function buildLaunchMachineIntent(input: {
     environment: input.environment,
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.github === undefined ? {} : { github: input.github }),
+    ...(input.tools === undefined ? {} : { tools: input.tools }),
     ...(input.title === undefined ? {} : { title: input.title }),
     ...(input.labels === undefined ? {} : { labels: input.labels }),
     prompt: input.prompt,

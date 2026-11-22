@@ -16,7 +16,7 @@ import type { TriggerDashboard } from "../triggers/dashboard.js";
 import type { PublicApi } from "../public-api/index.js";
 import type { UsageDashboard } from "../usage/dashboard.js";
 import type { ProviderApplications } from "../provider-applications/index.js";
-import type { DaemonProviderCatalog } from "../daemons/provider-catalog.js";
+import type { DaemonCatalog } from "../daemons/catalog.js";
 import type { DiscordChannelCatalog } from "../triggers/discord/channel-catalog.js";
 import type { HomeDashboard } from "../home/dashboard.js";
 
@@ -71,7 +71,7 @@ export interface ApplicationRuntime {
   billing: BillingRuntime | null;
   projectDashboard: ProjectDashboard | null;
   triggerDashboard?: TriggerDashboard | null;
-  daemonProviderCatalog?: DaemonProviderCatalog | null;
+  daemonCatalog?: DaemonCatalog | null;
   discordChannelCatalog?: DiscordChannelCatalog | null;
   /** The organization landing: checklist facts and a recent-window overview. */
   homeDashboard?: HomeDashboard | null;

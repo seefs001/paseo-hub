@@ -1968,6 +1968,7 @@ async function buildCreateAgentOptions(
     },
     toolPolicy: executionToolPolicy({
       allowOutputs: intent.allowOutputs,
+      ...(intent.tools === undefined ? {} : { tools: intent.tools }),
       outputContext: intent.outputContext,
       ...(intent.outputSchema === undefined ? {} : { outputSchema: intent.outputSchema }),
       capabilities,

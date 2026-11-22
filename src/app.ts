@@ -1,3 +1,5 @@
+import { createExecutionLauncher } from "./agent-executions/launcher.js";
+import { createWebhookProvider, handleWebhookDelivery } from "./triggers/webhook/index.js";
 import { createScheduleSource, createScheduleProvider } from "./triggers/schedule/index.js";
 import { createExecutionCapabilityServer } from "./execution-capabilities/server.js";
 import { maxReplyFileBytes, OutputExecutorRegistry } from "./execution-capabilities/outputs.js";
@@ -55,6 +57,7 @@ import type { EntitlementsService } from "./entitlements/service.js";
 import type { ExecutionAuthority } from "./execution-authority/index.js";
 
 export interface HubRuntimeOptions {
+  integrationTools?: import("./integration-tools/index.js").IntegrationToolHandlers;
   database: Database | null;
   /** Required end to end so the executions meter can never be silently skipped. */
   entitlements: EntitlementsService | null;
@@ -102,11 +105,13 @@ export interface HubOperations {
   handleOrganizationDaemonRevocation(request: Request, daemonId: string): Promise<Response>;
   handleSessionCapabilities(request: Request, sessionId: string): Promise<Response>;
   handleExecutionCapabilities(request: Request, executionId: string): Promise<Response>;
+  handleExecutionLauncher(request: Request, executionId: string): Promise<Response>;
   handleAttachmentDownload(
     request: Request,
     executionId: string,
     attachmentId: string,
   ): Promise<Response>;
+  handleWebhookDelivery(request: Request, endpointId: string): Promise<Response>;
   handleManualTrigger(request: Request, entrypoint: "trigger" | "smoke"): Promise<Response>;
 }
 
@@ -152,6 +157,7 @@ export function createHubApplication(options: HubRuntimeOptions): HubApplication
         );
   const providers = [
     createScheduleProvider(),
+    createWebhookProvider(),
     manualProvider,
     ...configuredProviders,
     ...(options.providers ?? []),
@@ -313,10 +319,23 @@ export function createHubApplication(options: HubRuntimeOptions): HubApplication
       capabilityServer === null
         ? databaseUnavailable()
         : capabilityServer.handle(request, executionId),
+    handleExecutionLauncher: createExecutionLauncher(
+      options.database,
+      options.browserOrganizationAccess,
+    ),
     handleAttachmentDownload: (request, executionId, attachmentId) =>
       attachments === undefined
         ? databaseUnavailable()
         : attachments.handle(request, executionId, attachmentId),
+    handleWebhookDelivery: (request, endpointId) =>
+      options.database === null || options.entitlements === null
+        ? databaseUnavailable()
+        : handleWebhookDelivery(
+            request,
+            endpointId,
+            options.database.webhooks,
+            options.entitlements,
+          ),
     handleManualTrigger: (request, entrypoint) =>
       manualSource === undefined
         ? databaseUnavailable()
@@ -357,6 +376,7 @@ function createAppPublicOperations(
       triggerForOrganization: (organizationId) => {
         const store = new OrganizationTriggerStore(database, organizationId, daemonAgentValidator);
         return {
+          rotateWebhookSecret: (triggerId) => database.webhooks.rotate(organizationId, triggerId),
           async list() {
             return Promise.all(
               (await store.list()).map(async (trigger) => ({
@@ -425,7 +445,11 @@ function createAppExecutionCapabilityServer(
       ? {}
       : { completionTokenSecret: options.completionTokenSecret }),
     database: options.database,
+    ...(options.publicBaseUrl === undefined ? {} : { publicBaseUrl: options.publicBaseUrl }),
     outputs: outputRegistry,
+    ...(options.integrationTools === undefined
+      ? {}
+      : { integrationTools: options.integrationTools }),
     completeExecution: (input) =>
       daemonModule.lifecycle.completeAgentExecutionFromCallback(input, { deferHubAction: true }),
     ...(daemons === null

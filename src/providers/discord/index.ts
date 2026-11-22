@@ -1,3 +1,5 @@
+import { REST } from "discord.js";
+import { createDiscordIntegrationTools } from "../../integration-tools/index.js";
 import type { AuthServer } from "../../auth/server.js";
 import type { Database, DiscordConnectionRecord } from "../../db/types.js";
 import { reportFailure } from "../../failures/index.js";
@@ -46,6 +48,7 @@ export interface CreateDiscordRegistrationOptions {
   publicBaseUrl?: string;
   configuration?: DiscordRegistrationConfiguration | null;
   bot?: DiscordBotClient;
+  integrationRest?: REST;
   connectionClient?: DiscordConnectionClient;
   fetch?: typeof fetch;
   configurationVersion?: number;
@@ -72,12 +75,13 @@ export function createDiscordRegistration(
   }
   const database = options.database;
 
-  const bot =
-    options.bot ??
-    createDiscordBotClient({
-      token: configuration.botToken,
-      clientId: configuration.clientId,
-    });
+  const nativeBot =
+    options.bot === undefined
+      ? createDiscordBotClient({ token: configuration.botToken, clientId: configuration.clientId })
+      : undefined;
+  const bot = options.bot ?? nativeBot!;
+  const rest =
+    options.integrationRest ?? nativeBot?.rest ?? new REST().setToken(configuration.botToken);
   const client =
     options.connectionClient ??
     createDiscordConnectionClient({
@@ -128,6 +132,9 @@ export function createDiscordRegistration(
         }),
     ],
     sources: [gateway],
+    integrationTools: {
+      discord: createDiscordIntegrationTools(database, configuration.clientId, rest),
+    },
     outputs: [
       {
         type: "discord.reply",

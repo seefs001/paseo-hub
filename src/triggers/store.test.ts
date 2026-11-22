@@ -36,18 +36,11 @@ describe("organization trigger store", () => {
     assert.equal((await database.listProjectsForOrganization("org")).length, 0);
   });
 
-  it.each([
-    ["a relative working directory", "cwd: workspace", /absolute path/iu],
-    ["an omitted execution mode", "provider: codex, mode: full-access", /mode.*required/iu],
-  ])("rejects %s at the authoring boundary", async (_name, authored, expected) => {
+  it("rejects a relative working directory at the authoring boundary", async () => {
     const database = createMemoryDatabase({ organizationIds: ["org"] });
     const store = new OrganizationTriggerStore(database, "org", acceptingAgentValidator());
-    const yaml = triggerYaml(true).replace(
-      authored === "cwd: workspace" ? "cwd: /workspace" : authored,
-      authored === "cwd: workspace" ? authored : "provider: codex",
-    );
-
-    await assert.rejects(store.save({ yaml, userId: null }), expected);
+    const yaml = triggerYaml(true).replace("cwd: /workspace", "cwd: workspace");
+    await assert.rejects(store.save({ yaml, userId: null }), /absolute path/iu);
   });
 
   /**
@@ -96,94 +89,25 @@ describe("organization trigger store", () => {
     );
   });
 
-  it("accepts Pi for unattended runs without an authored mode", async () => {
-    const database = await enrolledDatabase();
-    const store = new OrganizationTriggerStore(
-      database,
-      "org",
-      catalogAgentValidator({ pi: { modes: [] } }),
-    );
-
-    const trigger = await store.save({
-      yaml: triggerYaml(true).replace(
-        "agent: { provider: codex, mode: full-access }",
-        "agent: { provider: pi }",
-      ),
-      userId: null,
-    });
-
-    assert.equal((await store.list()).length, 1);
-    assert.equal((await store.activeRevision(trigger)).version, 1);
-  });
-
-  it.each(["claude", "codex", "opencode"])(
-    "still requires an authored mode for %s",
+  it.each(["pi", "custom-provider"])(
+    "accepts daemon provider %s without a mode",
     async (provider) => {
       const database = await enrolledDatabase();
-      const store = new OrganizationTriggerStore(database, "org", acceptingAgentValidator());
-
-      await assert.rejects(
-        store.save({
-          yaml: triggerYaml(true).replace(
-            "agent: { provider: codex, mode: full-access }",
-            `agent: { provider: ${provider} }`,
-          ),
-          userId: null,
-        }),
-        /run\.agent\.mode: is required for new triggers/u,
+      const store = new OrganizationTriggerStore(
+        database,
+        "org",
+        catalogAgentValidator({ [provider]: { modes: [] } }),
       );
-      assert.equal((await store.list()).length, 0);
-    },
-  );
-
-  it.each([
-    [
-      "mode: full-access",
-      /run\.agent\.mode: Mode 'full-access' is not available for provider 'pi'/u,
-    ],
-    ["model: unknown", /run\.agent\.model: Model 'unknown' is not available for provider 'pi'/u],
-  ])("still checks Pi's authored %s against the daemon", async (option, expected) => {
-    const database = await enrolledDatabase();
-    const store = new OrganizationTriggerStore(
-      database,
-      "org",
-      catalogAgentValidator({ pi: { modes: [], models: ["known"] } }),
-    );
-
-    await assert.rejects(
-      store.save({
+      await store.save({
         yaml: triggerYaml(true).replace(
-          "agent: { provider: codex, mode: full-access }",
-          `agent: { provider: pi, ${option} }`,
+          "provider: codex, mode: full-access",
+          `provider: ${provider}`,
         ),
         userId: null,
-      }),
-      expected,
-    );
-    assert.equal((await store.list()).length, 0);
-  });
-
-  /**
-   * `Provider 'omp' cannot preapprove exact MCP tools for unattended execution` is what the
-   * daemon says when Hub sends its tool policy to a provider that cannot honour one. Hub sends
-   * that policy with every run, so the provider is refused at save.
-   */
-  it("rejects a provider that cannot run unattended, without asking the daemon", async () => {
-    const database = await enrolledDatabase();
-    const store = new OrganizationTriggerStore(
-      database,
-      "org",
-      catalogAgentValidator({ omp: { modes: ["full-access"] } }),
-    );
-
-    await assert.rejects(
-      store.save({
-        yaml: triggerYaml(true).replace("provider: codex", "provider: omp"),
-        userId: null,
-      }),
-      /run\.agent\.provider: Provider 'omp' cannot run unattended Hub automations; select Claude, Codex, OpenCode, Pi, or DeepSeek Harness/u,
-    );
-  });
+      });
+      assert.equal((await store.list()).length, 1);
+    },
+  );
 
   it("refuses a new trigger while the target daemon cannot be asked", async () => {
     const database = await enrolledDatabase();

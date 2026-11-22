@@ -1,3 +1,4 @@
+import type { IntegrationToolHandlers } from "./integration-tools/index.js";
 import { createHubApplication } from "./app.js";
 import type { AuthServer } from "./auth/server.js";
 import type { BillingRuntime } from "./billing/index.js";
@@ -27,7 +28,7 @@ import { ProjectDashboard } from "./projects/dashboard.js";
 import { CompositionResources } from "./composition-resources.js";
 import { TriggerDashboard } from "./triggers/dashboard.js";
 import type { ProviderApplications } from "./provider-applications/index.js";
-import { DaemonProviderCatalog } from "./daemons/provider-catalog.js";
+import { DaemonCatalog } from "./daemons/catalog.js";
 import { DiscordChannelCatalog } from "./triggers/discord/channel-catalog.js";
 import { HomeDashboard } from "./home/dashboard.js";
 import type { ProviderConnectionRegistration } from "./providers/registration.js";
@@ -84,9 +85,11 @@ async function createOwnedApplicationRuntime(
     connectionsForProject,
     integrations,
   );
+  const integrationTools: IntegrationToolHandlers = {};
   const outputRegistry = new OutputExecutorRegistry();
-  for (const output of registrations.flatMap((registration) => registration.outputs)) {
-    outputRegistry.register(output);
+  for (const registration of registrations) {
+    for (const output of registration.outputs) outputRegistry.register(output);
+    Object.assign(integrationTools, registration.integrationTools);
   }
 
   const application = createHubApplication({
@@ -112,6 +115,7 @@ async function createOwnedApplicationRuntime(
       ? {}
       : { completionTokenSecret: options.completionTokenSecret }),
     outputRegistry,
+    integrationTools,
     ...(options.daemonConnectionForId === undefined
       ? {}
       : { daemonConnectionForId: options.daemonConnectionForId }),
@@ -139,7 +143,7 @@ async function createOwnedApplicationRuntime(
         ? null
         : new ProjectDashboard(options.database, options.auth),
     triggerDashboard: triggerDashboardFor(options, application.hub),
-    daemonProviderCatalog: daemonProviderCatalogFor(options, application.hub),
+    daemonCatalog: daemonCatalogFor(options, application.hub),
     discordChannelCatalog: discordChannelCatalogFor(options, registrations),
     homeDashboard: homeDashboardFor(options, connections),
     ...entitlementSurfaces(options),
@@ -346,7 +350,12 @@ function triggerDashboardFor(
 ): TriggerDashboard | null {
   return options.database === null || options.auth === null || hub.agentValidator === null
     ? null
-    : new TriggerDashboard(options.database, options.auth, hub.agentValidator);
+    : new TriggerDashboard(
+        options.database,
+        options.auth,
+        hub.agentValidator,
+        options.publicBaseUrl,
+      );
 }
 
 function homeDashboardFor(
@@ -369,12 +378,12 @@ function isConfigured(status: unknown): boolean {
   );
 }
 
-function daemonProviderCatalogFor(
+function daemonCatalogFor(
   options: ApplicationCompositionOptions,
   hub: import("./app.js").HubRuntime,
-): DaemonProviderCatalog | null {
+): DaemonCatalog | null {
   if (options.database === null || options.auth === null) return null;
-  return new DaemonProviderCatalog(options.database, options.auth, (daemonId) =>
+  return new DaemonCatalog(options.database, options.auth, (daemonId) =>
     hub.connectionForDaemon(daemonId),
   );
 }

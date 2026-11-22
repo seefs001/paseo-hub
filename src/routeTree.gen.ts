@@ -11,8 +11,10 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WebhookRouteImport } from './routes/webhook'
 import { Route as HealthRouteImport } from './routes/health'
+import { Route as FaviconDotsvgRouteImport } from './routes/favicon[.]svg'
 import { Route as ShellRouteImport } from './routes/_shell'
 import { Route as ShellIndexRouteImport } from './routes/_shell/index'
+import { Route as WebhooksEndpointIdRouteImport } from './routes/webhooks/$endpointId'
 import { Route as TestTriggerRouteImport } from './routes/test/trigger'
 import { Route as TestStripeCheckoutRouteImport } from './routes/test/stripe-checkout'
 import { Route as TestSmokeRouteImport } from './routes/test/smoke'
@@ -27,6 +29,7 @@ import { Route as ShellOperatorRouteImport } from './routes/_shell/operator'
 import { Route as ShellIntegrationsRouteImport } from './routes/_shell/integrations'
 import { Route as ShellCliLoginRouteImport } from './routes/_shell/cli-login'
 import { Route as ShellAppsRouteImport } from './routes/_shell/apps'
+import { Route as OpenExecutionsExecutionIdRouteImport } from './routes/open/executions/$executionId'
 import { Route as ApiV1CliAuthorizationsRouteImport } from './routes/api/v1/cli-authorizations'
 import { Route as ApiV1SplatRouteImport } from './routes/api/v1/$'
 import { Route as ApiDaemonsEnrollRouteImport } from './routes/api/daemons/enroll'
@@ -70,6 +73,11 @@ const HealthRoute = HealthRouteImport.update({
   path: '/health',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FaviconDotsvgRoute = FaviconDotsvgRouteImport.update({
+  id: '/favicon.svg',
+  path: '/favicon.svg',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ShellRoute = ShellRouteImport.update({
   id: '/_shell',
   getParentRoute: () => rootRouteImport,
@@ -78,6 +86,11 @@ const ShellIndexRoute = ShellIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ShellRoute,
+} as any)
+const WebhooksEndpointIdRoute = WebhooksEndpointIdRouteImport.update({
+  id: '/webhooks/$endpointId',
+  path: '/webhooks/$endpointId',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const TestTriggerRoute = TestTriggerRouteImport.update({
   id: '/test/trigger',
@@ -149,6 +162,12 @@ const ShellAppsRoute = ShellAppsRouteImport.update({
   path: '/apps',
   getParentRoute: () => ShellRoute,
 } as any)
+const OpenExecutionsExecutionIdRoute =
+  OpenExecutionsExecutionIdRouteImport.update({
+    id: '/open/executions/$executionId',
+    path: '/open/executions/$executionId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiV1CliAuthorizationsRoute = ApiV1CliAuthorizationsRouteImport.update({
   id: '/api/v1/cli-authorizations',
   path: '/api/v1/cli-authorizations',
@@ -337,6 +356,7 @@ const ShellOOrganizationSlugSettingsApiKeysRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof ShellIndexRoute
+  '/favicon.svg': typeof FaviconDotsvgRoute
   '/health': typeof HealthRoute
   '/webhook': typeof WebhookRoute
   '/apps': typeof ShellAppsRoute
@@ -353,6 +373,7 @@ export interface FileRoutesByFullPath {
   '/test/smoke': typeof TestSmokeRoute
   '/test/stripe-checkout': typeof TestStripeCheckoutRoute
   '/test/trigger': typeof TestTriggerRoute
+  '/webhooks/$endpointId': typeof WebhooksEndpointIdRoute
   '/agent-executions/$executionId/mcp': typeof AgentExecutionsExecutionIdMcpRoute
   '/agent-sessions/$sessionId/mcp': typeof AgentSessionsSessionIdMcpRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -362,6 +383,7 @@ export interface FileRoutesByFullPath {
   '/api/daemons/enroll': typeof ApiDaemonsEnrollRoute
   '/api/v1/$': typeof ApiV1SplatRoute
   '/api/v1/cli-authorizations': typeof ApiV1CliAuthorizationsRouteWithChildren
+  '/open/executions/$executionId': typeof OpenExecutionsExecutionIdRoute
   '/o/$organizationSlug/activity': typeof ShellOOrganizationSlugActivityRoute
   '/o/$organizationSlug/daemons': typeof ShellOOrganizationSlugDaemonsRoute
   '/o/$organizationSlug/home': typeof ShellOOrganizationSlugHomeRoute
@@ -387,6 +409,7 @@ export interface FileRoutesByFullPath {
   '/o/$organizationSlug/triggers/': typeof ShellOOrganizationSlugTriggersIndexRoute
 }
 export interface FileRoutesByTo {
+  '/favicon.svg': typeof FaviconDotsvgRoute
   '/health': typeof HealthRoute
   '/webhook': typeof WebhookRoute
   '/apps': typeof ShellAppsRoute
@@ -403,6 +426,7 @@ export interface FileRoutesByTo {
   '/test/smoke': typeof TestSmokeRoute
   '/test/stripe-checkout': typeof TestStripeCheckoutRoute
   '/test/trigger': typeof TestTriggerRoute
+  '/webhooks/$endpointId': typeof WebhooksEndpointIdRoute
   '/': typeof ShellIndexRoute
   '/agent-executions/$executionId/mcp': typeof AgentExecutionsExecutionIdMcpRoute
   '/agent-sessions/$sessionId/mcp': typeof AgentSessionsSessionIdMcpRoute
@@ -413,6 +437,7 @@ export interface FileRoutesByTo {
   '/api/daemons/enroll': typeof ApiDaemonsEnrollRoute
   '/api/v1/$': typeof ApiV1SplatRoute
   '/api/v1/cli-authorizations': typeof ApiV1CliAuthorizationsRouteWithChildren
+  '/open/executions/$executionId': typeof OpenExecutionsExecutionIdRoute
   '/o/$organizationSlug/activity': typeof ShellOOrganizationSlugActivityRoute
   '/o/$organizationSlug/daemons': typeof ShellOOrganizationSlugDaemonsRoute
   '/o/$organizationSlug/home': typeof ShellOOrganizationSlugHomeRoute
@@ -438,6 +463,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_shell': typeof ShellRouteWithChildren
+  '/favicon.svg': typeof FaviconDotsvgRoute
   '/health': typeof HealthRoute
   '/webhook': typeof WebhookRoute
   '/_shell/apps': typeof ShellAppsRoute
@@ -454,6 +480,7 @@ export interface FileRoutesById {
   '/test/smoke': typeof TestSmokeRoute
   '/test/stripe-checkout': typeof TestStripeCheckoutRoute
   '/test/trigger': typeof TestTriggerRoute
+  '/webhooks/$endpointId': typeof WebhooksEndpointIdRoute
   '/_shell/': typeof ShellIndexRoute
   '/agent-executions/$executionId/mcp': typeof AgentExecutionsExecutionIdMcpRoute
   '/agent-sessions/$sessionId/mcp': typeof AgentSessionsSessionIdMcpRoute
@@ -464,6 +491,7 @@ export interface FileRoutesById {
   '/api/daemons/enroll': typeof ApiDaemonsEnrollRoute
   '/api/v1/$': typeof ApiV1SplatRoute
   '/api/v1/cli-authorizations': typeof ApiV1CliAuthorizationsRouteWithChildren
+  '/open/executions/$executionId': typeof OpenExecutionsExecutionIdRoute
   '/_shell/o/$organizationSlug/activity': typeof ShellOOrganizationSlugActivityRoute
   '/_shell/o/$organizationSlug/daemons': typeof ShellOOrganizationSlugDaemonsRoute
   '/_shell/o/$organizationSlug/home': typeof ShellOOrganizationSlugHomeRoute
@@ -492,6 +520,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/favicon.svg'
     | '/health'
     | '/webhook'
     | '/apps'
@@ -508,6 +537,7 @@ export interface FileRouteTypes {
     | '/test/smoke'
     | '/test/stripe-checkout'
     | '/test/trigger'
+    | '/webhooks/$endpointId'
     | '/agent-executions/$executionId/mcp'
     | '/agent-sessions/$sessionId/mcp'
     | '/api/auth/$'
@@ -517,6 +547,7 @@ export interface FileRouteTypes {
     | '/api/daemons/enroll'
     | '/api/v1/$'
     | '/api/v1/cli-authorizations'
+    | '/open/executions/$executionId'
     | '/o/$organizationSlug/activity'
     | '/o/$organizationSlug/daemons'
     | '/o/$organizationSlug/home'
@@ -542,6 +573,7 @@ export interface FileRouteTypes {
     | '/o/$organizationSlug/triggers/'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/favicon.svg'
     | '/health'
     | '/webhook'
     | '/apps'
@@ -558,6 +590,7 @@ export interface FileRouteTypes {
     | '/test/smoke'
     | '/test/stripe-checkout'
     | '/test/trigger'
+    | '/webhooks/$endpointId'
     | '/'
     | '/agent-executions/$executionId/mcp'
     | '/agent-sessions/$sessionId/mcp'
@@ -568,6 +601,7 @@ export interface FileRouteTypes {
     | '/api/daemons/enroll'
     | '/api/v1/$'
     | '/api/v1/cli-authorizations'
+    | '/open/executions/$executionId'
     | '/o/$organizationSlug/activity'
     | '/o/$organizationSlug/daemons'
     | '/o/$organizationSlug/home'
@@ -592,6 +626,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_shell'
+    | '/favicon.svg'
     | '/health'
     | '/webhook'
     | '/_shell/apps'
@@ -608,6 +643,7 @@ export interface FileRouteTypes {
     | '/test/smoke'
     | '/test/stripe-checkout'
     | '/test/trigger'
+    | '/webhooks/$endpointId'
     | '/_shell/'
     | '/agent-executions/$executionId/mcp'
     | '/agent-sessions/$sessionId/mcp'
@@ -618,6 +654,7 @@ export interface FileRouteTypes {
     | '/api/daemons/enroll'
     | '/api/v1/$'
     | '/api/v1/cli-authorizations'
+    | '/open/executions/$executionId'
     | '/_shell/o/$organizationSlug/activity'
     | '/_shell/o/$organizationSlug/daemons'
     | '/_shell/o/$organizationSlug/home'
@@ -645,6 +682,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   ShellRoute: typeof ShellRouteWithChildren
+  FaviconDotsvgRoute: typeof FaviconDotsvgRoute
   HealthRoute: typeof HealthRoute
   WebhookRoute: typeof WebhookRoute
   ApiSplatRoute: typeof ApiSplatRoute
@@ -656,6 +694,7 @@ export interface RootRouteChildren {
   TestSmokeRoute: typeof TestSmokeRoute
   TestStripeCheckoutRoute: typeof TestStripeCheckoutRoute
   TestTriggerRoute: typeof TestTriggerRoute
+  WebhooksEndpointIdRoute: typeof WebhooksEndpointIdRoute
   AgentExecutionsExecutionIdMcpRoute: typeof AgentExecutionsExecutionIdMcpRoute
   AgentSessionsSessionIdMcpRoute: typeof AgentSessionsSessionIdMcpRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
@@ -665,6 +704,7 @@ export interface RootRouteChildren {
   ApiDaemonsEnrollRoute: typeof ApiDaemonsEnrollRoute
   ApiV1SplatRoute: typeof ApiV1SplatRoute
   ApiV1CliAuthorizationsRoute: typeof ApiV1CliAuthorizationsRouteWithChildren
+  OpenExecutionsExecutionIdRoute: typeof OpenExecutionsExecutionIdRoute
   AgentExecutionsExecutionIdAttachmentsAttachmentIdRoute: typeof AgentExecutionsExecutionIdAttachmentsAttachmentIdRoute
   ApiIntegrationsDiscordCallbackRoute: typeof ApiIntegrationsDiscordCallbackRoute
   ApiIntegrationsGithubCallbackRoute: typeof ApiIntegrationsGithubCallbackRoute
@@ -692,6 +732,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HealthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/favicon.svg': {
+      id: '/favicon.svg'
+      path: '/favicon.svg'
+      fullPath: '/favicon.svg'
+      preLoaderRoute: typeof FaviconDotsvgRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_shell': {
       id: '/_shell'
       path: ''
@@ -705,6 +752,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof ShellIndexRouteImport
       parentRoute: typeof ShellRoute
+    }
+    '/webhooks/$endpointId': {
+      id: '/webhooks/$endpointId'
+      path: '/webhooks/$endpointId'
+      fullPath: '/webhooks/$endpointId'
+      preLoaderRoute: typeof WebhooksEndpointIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/test/trigger': {
       id: '/test/trigger'
@@ -803,6 +857,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/apps'
       preLoaderRoute: typeof ShellAppsRouteImport
       parentRoute: typeof ShellRoute
+    }
+    '/open/executions/$executionId': {
+      id: '/open/executions/$executionId'
+      path: '/open/executions/$executionId'
+      fullPath: '/open/executions/$executionId'
+      preLoaderRoute: typeof OpenExecutionsExecutionIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/v1/cli-authorizations': {
       id: '/api/v1/cli-authorizations'
@@ -1127,6 +1188,7 @@ const ApiV1CliAuthorizationsRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   ShellRoute: ShellRouteWithChildren,
+  FaviconDotsvgRoute: FaviconDotsvgRoute,
   HealthRoute: HealthRoute,
   WebhookRoute: WebhookRoute,
   ApiSplatRoute: ApiSplatRoute,
@@ -1138,6 +1200,7 @@ const rootRouteChildren: RootRouteChildren = {
   TestSmokeRoute: TestSmokeRoute,
   TestStripeCheckoutRoute: TestStripeCheckoutRoute,
   TestTriggerRoute: TestTriggerRoute,
+  WebhooksEndpointIdRoute: WebhooksEndpointIdRoute,
   AgentExecutionsExecutionIdMcpRoute: AgentExecutionsExecutionIdMcpRoute,
   AgentSessionsSessionIdMcpRoute: AgentSessionsSessionIdMcpRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
@@ -1147,6 +1210,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDaemonsEnrollRoute: ApiDaemonsEnrollRoute,
   ApiV1SplatRoute: ApiV1SplatRoute,
   ApiV1CliAuthorizationsRoute: ApiV1CliAuthorizationsRouteWithChildren,
+  OpenExecutionsExecutionIdRoute: OpenExecutionsExecutionIdRoute,
   AgentExecutionsExecutionIdAttachmentsAttachmentIdRoute:
     AgentExecutionsExecutionIdAttachmentsAttachmentIdRoute,
   ApiIntegrationsDiscordCallbackRoute: ApiIntegrationsDiscordCallbackRoute,

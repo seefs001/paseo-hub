@@ -14,7 +14,15 @@ export type WorkflowDeadlineKind = "step_hard" | "step_idle" | "whole_run";
 export interface ProviderEventReceiptRecord {
   id: string;
   organizationId: string;
-  provider: "github" | "slack" | "discord" | "linear" | "telegram" | "manual" | "schedule";
+  provider:
+    | "github"
+    | "slack"
+    | "discord"
+    | "linear"
+    | "telegram"
+    | "manual"
+    | "schedule"
+    | "webhook";
   connectionId: string | null;
   resourceId: string | null;
   deliveryId: string;
@@ -1316,6 +1324,7 @@ export interface TerminateMachineFields {
 
 export interface Database {
   readonly executionAuthority: import("../execution-authority/index.js").ExecutionAuthorityStore;
+  readonly webhooks: import("../triggers/webhook/index.js").WebhookStore;
   readonly schedules: import("../triggers/schedule/index.js").ScheduleStore;
   findAgentSessionByKey(
     projectId: string,

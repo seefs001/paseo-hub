@@ -1,8 +1,10 @@
 import { RecurrenceSchema } from "../schedule/recurrence.js";
 import { z } from "zod";
+import { IntegrationToolGrantsSchema } from "../../integration-tools/grants.js";
 import { ContinuationSchema } from "../continuation.js";
 import { eventDefinition, isEditorEvent } from "./events.js";
 import { AuthoredGitHubAuthoritySchema } from "../../config/github-authority.js";
+import { GitHubAuthorAssociationSchema } from "../github/author-association.js";
 
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -104,6 +106,7 @@ export const TriggerFilterSchema = z
       .record(z.string(), InputValueSchema)
       .optional()
       .meta({ description: "Input values this event supplies to the run." }),
+    author_associations: z.array(GitHubAuthorAssociationSchema).min(1).optional(),
   })
   .strict()
   .meta({ description: "Conditions an event must meet to start a run." });
@@ -219,6 +222,7 @@ export const TriggerRunSchema = z
       description:
         "A short-lived GitHub App token for the agent. connection is the GitHub connection slug; permissions maps GitHub App permission names to read, write, or admin; duration is at most 1h.",
     }),
+    tools: IntegrationToolGrantsSchema.optional(),
     output: z
       .object({ schema: z.record(z.string(), z.unknown()) })
       .strict()
@@ -296,6 +300,7 @@ export const TriggerDocumentSchema = z
           message: "Recurrence is only supported for schedule.tick.",
         });
       }
+      if (event === "webhook.received") validateWebhook(definition, trigger.inputs, context);
       if (!isEditorEvent(event)) continue;
       for (const qualifier of eventDefinition(event).qualifiers) {
         const value = definition.filters?.[qualifier.key];
@@ -325,3 +330,25 @@ export const TriggerDocumentSchema = z
   });
 
 export type TriggerDocument = z.infer<typeof TriggerDocumentSchema>;
+
+function validateWebhook(
+  definition: z.infer<typeof TriggerEventSchema>,
+  inputs: TriggerDocument["inputs"],
+  context: z.RefinementCtx,
+): void {
+  if (definition.connection !== undefined || definition.filters !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["on", "webhook.received"],
+      message: "Webhook does not accept connection or filters.",
+    });
+  }
+  for (const [name, input] of Object.entries(inputs ?? {})) {
+    if (input.required !== true) continue;
+    context.addIssue({
+      code: "custom",
+      path: ["inputs", name],
+      message: "A webhook cannot supply required trigger inputs.",
+    });
+  }
+}
