@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Database } from "../db/types.js";
 import { DeploymentProjects } from "../project-deployments/index.js";
+import { readRunJournal } from "../workflows/journal.js";
 import type { PublicOperationRepository } from "./types.js";
 
 export function createDatabasePublicOperationRepository(
@@ -8,6 +9,9 @@ export function createDatabasePublicOperationRepository(
 ): PublicOperationRepository {
   const deploymentProjects = new DeploymentProjects(database);
   return {
+    readRunJournal(organizationId, triggerRunId) {
+      return readRunJournal(database, organizationId, triggerRunId);
+    },
     async listActiveProjects(organizationId) {
       return (await database.listProjectsForOrganization(organizationId))
         .filter((project) => project.status === "active")

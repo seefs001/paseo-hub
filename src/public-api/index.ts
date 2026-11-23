@@ -4,6 +4,7 @@ import { isDatabaseUnavailableError } from "../db/errors.js";
 import { reportFailure } from "../failures/index.js";
 import type {
   DispatchManualRunResult,
+  ReadRunJournalResult,
   InstallConfigurationResult,
   InstallTriggerResult,
   IssueEnrollmentTokenResult,
@@ -19,6 +20,7 @@ import type {
 } from "../public-operations/index.js";
 import {
   DispatchedManualRunSchema,
+  RunJournalSchema,
   EnrollmentTokenSchema,
   InstalledConfigurationSchema,
   InstalledTriggerSchema,
@@ -53,7 +55,8 @@ type PublicOperationResult =
   | ValidateConfigurationResult
   | InstallConfigurationResult
   | DispatchManualRunResult
-  | IssueEnrollmentTokenResult;
+  | IssueEnrollmentTokenResult
+  | ReadRunJournalResult;
 
 export interface PublicApi {
   handle(request: Request): Promise<Response>;
@@ -223,11 +226,15 @@ async function execute(
     if (!isTriggersResult(result)) throw new Error("invalid triggers operation result");
     return triggersResponse(requestId, result);
   }
+  if (definition.resultMapping === "run-journal") {
+    if (!isRunJournalResult(result)) throw new Error("invalid run journal operation result");
+    return runJournalResponse(requestId, result);
+  }
   return operationResponse(definition.resultMapping, requestId, result);
 }
 
 function operationResponse(
-  mapping: Exclude<PublicOperationDefinition["resultMapping"], "triggers">,
+  mapping: Exclude<PublicOperationDefinition["resultMapping"], "triggers" | "run-journal">,
   requestId: string,
   result: PublicOperationResult,
 ): Response {
@@ -662,6 +669,32 @@ function isTriggerInstallationResult(
     result.status === "invalid_trigger" ||
     (result.status === "installed" && "triggerId" in result)
   );
+}
+
+function isRunJournalResult(result: PublicOperationResult): result is ReadRunJournalResult {
+  return ["journal", "run_not_found", "infrastructure_unavailable"].includes(result.status);
+}
+
+function runJournalResponse(requestId: string, result: ReadRunJournalResult): Response {
+  switch (result.status) {
+    case "journal":
+      return success(requestId, 200, RunJournalSchema, {
+        ...result.journal,
+        entries: [...result.journal.entries],
+        unconfirmedOutputs: [...result.journal.unconfirmedOutputs],
+      });
+    case "run_not_found":
+      return problem(
+        requestId,
+        404,
+        "run_not_found",
+        "Run not found",
+        "No trigger run with that ID exists in the credential's organization.",
+      );
+    case "infrastructure_unavailable":
+      return infrastructureProblem(requestId);
+  }
+  return assertNever(result);
 }
 
 function isProjectsResult(result: PublicOperationResult): result is ListProjectsResult {

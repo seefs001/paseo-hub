@@ -549,6 +549,32 @@ export const workflowStepRuns = pgTable(
   ],
 );
 
+/**
+ * Append-only journal of what Hub observed for a trigger run. Status columns stay the source of
+ * truth for scheduling; the journal explains how the run got there, including outcomes Hub could
+ * not confirm.
+ */
+export const triggerRunEvents = pgTable(
+  "trigger_run_events",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    triggerRunId: uuid("trigger_run_id").notNull(),
+    stepId: text("step_id"),
+    agentExecutionId: uuid("agent_execution_id"),
+    kind: text().$type<import("./types.js").TriggerRunEventKind>().notNull(),
+    data: jsonb().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("trigger_run_events_run_created_idx").on(table.triggerRunId, table.createdAt),
+    foreignKey({
+      columns: [table.triggerRunId],
+      foreignColumns: [triggerRuns.id],
+      name: "trigger_run_events_trigger_run_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
 export const workflowWakeups = pgTable(
   "workflow_wakeups",
   {

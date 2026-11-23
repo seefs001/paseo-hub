@@ -5,6 +5,8 @@ import type { LaunchMachineIntent } from "../dispatcher/launch-machine-intent.js
 import { linearConnectionRequiresReauthorization } from "../providers/linear/client.js";
 import { launchedAgent } from "./mappers.js";
 import type {
+  TriggerRunEventInput,
+  TriggerRunEventRecord,
   AgentExecutionRecord,
   AgentExecutionOutputAttempt,
   AgentExecutionHubAcknowledgementInput,
@@ -205,6 +207,7 @@ class MemoryDatabase implements Database {
   >();
   private readonly workflowStepRuns = new Map<string, WorkflowStepRunRecord>();
   private readonly workflowWakeups = new Map<string, WorkflowWakeupRecord>();
+  private readonly triggerRunEvents: TriggerRunEventRecord[] = [];
   private readonly attachments = new Map<string, AttachmentRecord>();
   private readonly attachmentIdsBySource = new Map<string, string>();
   private readonly enrollmentTokens = new Map<string, EnrollmentTokenRecord>();
@@ -427,6 +430,32 @@ class MemoryDatabase implements Database {
 
   async findWorkflowStepRunByTriggerRun(triggerRunId: string) {
     return (await this.listWorkflowStepRunsForTriggerRun(triggerRunId))[0];
+  }
+
+  async appendTriggerRunEvent(input: TriggerRunEventInput): Promise<boolean> {
+    let triggerRunId = input.triggerRunId;
+    let stepId = input.stepId ?? null;
+    if (triggerRunId === undefined && input.agentExecutionId !== undefined) {
+      const stepRunId = this.agentExecutions.get(input.agentExecutionId)?.workflowStepRunId;
+      const step = stepRunId == null ? undefined : this.workflowStepRuns.get(stepRunId);
+      triggerRunId = step?.triggerRunId;
+      stepId ??= step?.stepId ?? null;
+    }
+    if (triggerRunId === undefined || !this.triggerRuns.has(triggerRunId)) return false;
+    this.triggerRunEvents.push({
+      id: randomUUID(),
+      triggerRunId,
+      stepId,
+      agentExecutionId: input.agentExecutionId ?? null,
+      kind: input.kind,
+      data: input.data ?? {},
+      createdAt: input.createdAt ?? new Date(),
+    });
+    return true;
+  }
+
+  async listTriggerRunEvents(triggerRunId: string): Promise<TriggerRunEventRecord[]> {
+    return this.triggerRunEvents.filter((event) => event.triggerRunId === triggerRunId);
   }
 
   async listWorkflowStepRunsForTriggerRun(triggerRunId: string) {
@@ -1905,10 +1934,7 @@ class MemoryDatabase implements Database {
       return undefined;
     }
     const activeAttempts = Object.values(execution.outputDeliveryAttempts).filter(
-      (attempt) =>
-        attempt.outputType === outputType &&
-        attempt.status === "pending" &&
-        attempt.leaseExpiresAt > startedAt,
+      (attempt) => attempt.outputType === outputType && occupiesOutputSlot(attempt),
     ).length;
     if (
       maxOutputs !== undefined &&
@@ -1944,18 +1970,7 @@ class MemoryDatabase implements Database {
     const attempt = execution.outputDeliveryAttempts[attemptId];
     if (attempt === undefined) return undefined;
     if (attempt.status === "succeeded") return execution;
-    if (attempt.status !== "pending" || attempt.leaseExpiresAt <= completedAt) {
-      if (attempt.status === "pending" && attempt.leaseExpiresAt <= completedAt) {
-        this.agentExecutions.set(executionId, {
-          ...execution,
-          outputDeliveryAttempts: {
-            ...execution.outputDeliveryAttempts,
-            [attemptId]: { ...attempt, status: "failed", completedAt: null },
-          },
-        });
-      }
-      return undefined;
-    }
+    if (attempt.status !== "pending" && attempt.status !== "unknown") return undefined;
     const count = execution.outputEmissions[attempt.outputType] ?? 0;
     const updated: AgentExecutionRecord = {
       ...execution,
@@ -1973,6 +1988,7 @@ class MemoryDatabase implements Database {
     executionId: string,
     attemptId: string,
     _failedAt: Date,
+    outcome: "failed" | "unknown" = "failed",
   ): Promise<boolean> {
     const execution = this.agentExecutions.get(executionId);
     const attempt = execution?.outputDeliveryAttempts[attemptId];
@@ -1983,7 +1999,7 @@ class MemoryDatabase implements Database {
       ...execution,
       outputDeliveryAttempts: {
         ...execution.outputDeliveryAttempts,
-        [attemptId]: { ...attempt, status: "failed", completedAt: null },
+        [attemptId]: { ...attempt, status: outcome, completedAt: null },
       },
     });
     return true;
@@ -3850,4 +3866,9 @@ function attachmentSourceKey(
   sourceId: string,
 ): string {
   return `${providerEventReceiptId}:${provider}:${sourceId}`;
+}
+
+/** Pending attempts and attempts with an unknown outcome may already have reached the provider. */
+function occupiesOutputSlot(attempt: AgentExecutionOutputAttempt): boolean {
+  return attempt.status === "pending" || attempt.status === "unknown";
 }

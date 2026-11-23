@@ -1,6 +1,7 @@
 import type { ApiKeyScope } from "../auth/api-key-contract.js";
 import type {
   DispatchManualRunResult,
+  ReadRunJournalResult,
   InstallConfigurationResult,
   InstallTriggerResult,
   IssueEnrollmentTokenResult,
@@ -29,6 +30,8 @@ import {
   ValidatedTriggerSchema,
   WebhookSecretRequestSchema,
   WebhookSecretSchema,
+  RunJournalRequestSchema,
+  RunJournalSchema,
 } from "./contracts.js";
 
 export type PublicOperationId =
@@ -42,7 +45,8 @@ export type PublicOperationId =
   | "validateConfiguration"
   | "installConfiguration"
   | "dispatchManualRun"
-  | "issueEnrollmentToken";
+  | "issueEnrollmentToken"
+  | "readRunJournal";
 
 export interface PublicOperationDefinition {
   id: PublicOperationId;
@@ -53,7 +57,8 @@ export interface PublicOperationDefinition {
     | typeof InstallConfigurationRequestSchema
     | typeof DispatchManualRunRequestSchema
     | typeof TriggerYamlRequestSchema
-    | typeof WebhookSecretRequestSchema;
+    | typeof WebhookSecretRequestSchema
+    | typeof RunJournalRequestSchema;
   successSchema:
     | typeof InstalledTriggerSchema
     | typeof ValidatedTriggerSchema
@@ -65,7 +70,8 @@ export interface PublicOperationDefinition {
     | typeof SetupResourcesSchema
     | typeof DispatchedManualRunSchema
     | typeof EnrollmentTokenSchema
-    | typeof WebhookSecretSchema;
+    | typeof WebhookSecretSchema
+    | typeof RunJournalSchema;
   successStatus: 200 | 201;
   resultMapping:
     | "webhook-secret"
@@ -78,7 +84,8 @@ export interface PublicOperationDefinition {
     | "validation"
     | "configuration"
     | "manual-run"
-    | "enrollment-token";
+    | "enrollment-token"
+    | "run-journal";
   summary: string;
   description: string;
   tag: "Triggers" | "Projects" | "Configurations" | "Runs" | "Daemons";
@@ -99,6 +106,7 @@ export interface PublicOperationDefinition {
     | InstallConfigurationResult
     | DispatchManualRunResult
     | IssueEnrollmentTokenResult
+    | ReadRunJournalResult
   >;
 }
 
@@ -362,6 +370,34 @@ export const publicOperationManifest: readonly PublicOperationDefinition[] = [
       503: "Hub authentication or storage is unavailable.",
     },
     invoke: (operations, authorization) => operations.issueEnrollmentToken(authorization),
+  },
+  {
+    id: "readRunJournal",
+    method: "post",
+    path: "/api/v1/runs/journal",
+    scope: "projects:read",
+    requestSchema: RunJournalRequestSchema,
+    successSchema: RunJournalSchema,
+    successStatus: 200,
+    resultMapping: "run-journal",
+    summary: "Read a run journal",
+    description:
+      "Returns the recorded facts of one trigger run: step transitions, dispatches, agent finish " +
+      "claims, and output delivery outcomes, including outcomes Hub could not confirm.",
+    tag: "Runs",
+    responses: {
+      200: "The run journal.",
+      400: "The JSON request is malformed.",
+      401: "The bearer credential is missing, malformed, or revoked.",
+      403: "The bearer credential lacks projects:read.",
+      404: "No trigger run with that ID exists in the credential's organization.",
+      500: "The operation failed unexpectedly.",
+      503: "Hub authentication or storage is unavailable.",
+    },
+    invoke: async (operations, authorization, input) =>
+      operations.readRunJournal === undefined
+        ? { status: "infrastructure_unavailable" as const }
+        : operations.readRunJournal(authorization, RunJournalRequestSchema.parse(input)),
   },
 ];
 

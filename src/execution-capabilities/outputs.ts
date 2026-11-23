@@ -48,6 +48,46 @@ export interface OutputFile {
 
 export type OutputExecutor = (input: OutputExecutionInput) => Promise<void>;
 
+/** A provider answered with an HTTP status. Executors throw it so Hub can classify the outcome. */
+export class ProviderHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ProviderHttpError";
+  }
+}
+
+const AMBIGUOUS_ERROR_NAMES = new Set(["AbortError", "TimeoutError", "DaemonResponseLostError"]);
+const AMBIGUOUS_ERROR_CODES = new Set([
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "EPIPE",
+  "ECONNABORTED",
+  "UND_ERR_SOCKET",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+]);
+
+/**
+ * True when an output delivery error does not prove the provider rejected the request: the
+ * request may have been applied and only the answer was lost. Validation errors, missing
+ * connections, and provider 4xx answers are definite failures.
+ */
+export function isDeliveryOutcomeUnknown(error: unknown): boolean {
+  for (let current = error, depth = 0; current instanceof Error && depth < 4; depth += 1) {
+    if (AMBIGUOUS_ERROR_NAMES.has(current.name)) return true;
+    if (current instanceof TypeError && current.message === "fetch failed") return true;
+    const code: unknown = Reflect.get(current, "code");
+    if (typeof code === "string" && AMBIGUOUS_ERROR_CODES.has(code)) return true;
+    const status: unknown = Reflect.get(current, "status");
+    if (typeof status === "number" && status >= 500) return true;
+    current = current.cause;
+  }
+  return false;
+}
+
 export interface OutputCapability {
   readonly type: string;
   readonly tool: OutputToolDefinition;

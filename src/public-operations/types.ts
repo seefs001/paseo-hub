@@ -1,6 +1,7 @@
 import type { ApiKeyScope } from "../auth/api-key-contract.js";
 import type { HubBundleFile } from "../config/bundle.js";
 import type { TriggerRunRecord } from "../db/types.js";
+import type { RunJournal } from "../workflows/journal.js";
 import type { DeploymentProjectResolution } from "../project-deployments/index.js";
 
 export interface PublicAuthorization {
@@ -82,6 +83,11 @@ export type InstallConfigurationResult =
       versionId: string;
       issues: readonly DomainIssue[];
     }
+  | InfrastructureUnavailable;
+
+export type ReadRunJournalResult =
+  | { status: "journal"; journal: RunJournal }
+  | { status: "run_not_found" }
   | InfrastructureUnavailable;
 
 export interface DispatchManualRunInput {
@@ -202,6 +208,11 @@ export interface PublicOperations {
     input: DispatchManualRunInput,
   ): Promise<DispatchManualRunResult>;
   issueEnrollmentToken(authorization: PublicAuthorization): Promise<IssueEnrollmentTokenResult>;
+  /** Optional so compositions without run storage can omit it; the API answers 503. */
+  readRunJournal?(
+    authorization: PublicAuthorization,
+    input: { triggerRunId: string },
+  ): Promise<ReadRunJournalResult>;
 }
 
 export interface PublicOperationRepository {
@@ -227,6 +238,7 @@ export interface PublicOperationRepository {
     authorization: PublicAuthorization,
     input: { token: string; expiresAt: Date },
   ): Promise<"issued" | "credential_revoked" | "infrastructure_unavailable">;
+  readRunJournal(organizationId: string, triggerRunId: string): Promise<RunJournal | undefined>;
 }
 
 export interface PublicOperationCapabilities {

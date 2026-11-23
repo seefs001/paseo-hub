@@ -319,6 +319,59 @@ export const DispatchedManualRunSchema = z
     },
   });
 
+export const RunJournalRequestSchema = z
+  .object({ triggerRunId: z.string().uuid() })
+  .strict()
+  .openapi("RunJournalRequest", {
+    example: { triggerRunId: "f83dc934-02a0-4849-8de7-699110be24ed" },
+  });
+
+const JsonRecordSchema = z.record(z.string(), z.unknown());
+
+export const RunJournalSchema = z
+  .object({
+    triggerRunId: z.string().uuid(),
+    configuredTriggerName: z.string(),
+    status: z.enum(["running", "succeeded", "failed", "timed_out", "rejected"]),
+    state: z.enum(["running", "succeeded", "failed", "timed_out", "rejected", "uncertain"]),
+    unconfirmedOutputs: z.array(
+      z.object({ stepId: z.string().nullable(), outputType: z.string() }).strict(),
+    ),
+    entries: z.array(
+      z
+        .object({
+          at: z.string().datetime({ offset: true }),
+          kind: z.string(),
+          stepId: z.string().nullable(),
+          agentExecutionId: z.string().uuid().nullable(),
+          data: JsonRecordSchema,
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+  .openapi("RunJournal", {
+    description:
+      "What Hub can prove happened in a trigger run. `state` is `uncertain` when the run ended " +
+      "with an output whose delivery Hub could not confirm; check the provider before resending.",
+    example: {
+      triggerRunId: "f83dc934-02a0-4849-8de7-699110be24ed",
+      configuredTriggerName: "deploy",
+      status: "succeeded",
+      state: "uncertain",
+      unconfirmedOutputs: [{ stepId: "notify", outputType: "slack.reply" }],
+      entries: [
+        {
+          at: "2026-08-06T18:00:00.000Z",
+          kind: "run_accepted",
+          stepId: null,
+          agentExecutionId: null,
+          data: {},
+        },
+      ],
+    },
+  });
+
 export const EnrollmentTokenSchema = z
   .object({
     token: z.string().min(32),

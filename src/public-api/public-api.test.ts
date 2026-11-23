@@ -299,6 +299,7 @@ describe("generated public OpenAPI", () => {
       "/api/v1/daemons/enrollment-tokens",
       "/api/v1/manual-runs",
       "/api/v1/projects",
+      "/api/v1/runs/journal",
       "/api/v1/setup-resources",
       "/api/v1/triggers",
       "/api/v1/triggers/install",

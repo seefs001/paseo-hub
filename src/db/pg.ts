@@ -41,6 +41,9 @@ import type {
   InsertProjectConfigurationRevisionInput,
   InsertAgentExecutionInput,
   InsertAttachmentInput,
+  TriggerRunEventInput,
+  TriggerRunEventKind,
+  TriggerRunEventRecord,
   InsertMachineInput,
   MachineRecord,
   TerminateMachineFields,
@@ -635,6 +638,64 @@ class PgDatabase implements Database {
       [triggerRunId],
     );
     return rows.rows[0] === undefined ? undefined : toWorkflowStepRunRecord(rows.rows[0]);
+  }
+
+  async appendTriggerRunEvent(input: TriggerRunEventInput): Promise<boolean> {
+    try {
+      const rows = await query<{ id: string }>(
+        this.pool,
+        `insert into trigger_run_events
+           (trigger_run_id, step_id, agent_execution_id, kind, data, created_at)
+         select target.trigger_run_id, coalesce($3::text, target.step_id), $2::uuid, $4, $5::jsonb,
+                coalesce($6::timestamptz, now())
+         from (
+           select $1::uuid as trigger_run_id, null::text as step_id
+           where $1::uuid is not null
+           union all
+           select step.trigger_run_id, step.step_id
+           from agent_executions execution
+           join workflow_step_runs step on step.id = execution.workflow_step_run_id
+           where $1::uuid is null and execution.id = $2::uuid
+         ) target
+         returning id`,
+        [
+          input.triggerRunId ?? null,
+          input.agentExecutionId ?? null,
+          input.stepId ?? null,
+          input.kind,
+          JSON.stringify(input.data ?? {}),
+          input.createdAt ?? null,
+        ],
+      );
+      return rows.rows.length > 0;
+    } catch (error) {
+      throw toDatabaseError(error);
+    }
+  }
+
+  async listTriggerRunEvents(triggerRunId: string): Promise<TriggerRunEventRecord[]> {
+    const rows = await query<{
+      id: string;
+      trigger_run_id: string;
+      step_id: string | null;
+      agent_execution_id: string | null;
+      kind: TriggerRunEventKind;
+      data: Record<string, JsonValue>;
+      created_at: Date;
+    }>(
+      this.pool,
+      `select * from trigger_run_events where trigger_run_id = $1 order by created_at, id`,
+      [triggerRunId],
+    );
+    return rows.rows.map((row) => ({
+      id: row.id,
+      triggerRunId: row.trigger_run_id,
+      stepId: row.step_id,
+      agentExecutionId: row.agent_execution_id,
+      kind: row.kind,
+      data: row.data,
+      createdAt: row.created_at,
+    }));
   }
 
   async listWorkflowStepRunsForTriggerRun(triggerRunId: string) {
@@ -2067,10 +2128,7 @@ class PgDatabase implements Database {
         }
         const execution = toAgentExecutionRecord(row);
         const activeAttempts = Object.values(execution.outputDeliveryAttempts).filter(
-          (attempt) =>
-            attempt.outputType === outputType &&
-            attempt.status === "pending" &&
-            attempt.leaseExpiresAt > startedAt,
+          (attempt) => attempt.outputType === outputType && occupiesOutputSlot(attempt),
         ).length;
         if (
           (maxOutputs !== undefined && maxOutputs < 1) ||
@@ -2130,22 +2188,7 @@ class PgDatabase implements Database {
         if (attempt.status === "succeeded") {
           return execution;
         }
-        if (attempt.status !== "pending") {
-          return undefined;
-        }
-        if (attempt.leaseExpiresAt <= completedAt) {
-          await client.query(
-            `update agent_executions
-           set output_delivery_attempts = $2::jsonb
-           where id = $1`,
-            [
-              executionId,
-              JSON.stringify({
-                ...execution.outputDeliveryAttempts,
-                [attemptId]: { ...attempt, status: "failed" as const, completedAt: null },
-              }),
-            ],
-          );
+        if (attempt.status !== "pending" && attempt.status !== "unknown") {
           return undefined;
         }
         const outputEmissions = {
@@ -2178,6 +2221,7 @@ class PgDatabase implements Database {
     executionId: string,
     attemptId: string,
     _failedAt: Date,
+    outcome: "failed" | "unknown" = "failed",
   ): Promise<boolean> {
     try {
       return await this.pool.transaction(async (client) => {
@@ -2202,7 +2246,7 @@ class PgDatabase implements Database {
             executionId,
             JSON.stringify({
               ...execution.outputDeliveryAttempts,
-              [attemptId]: { ...attempt, status: "failed" as const, completedAt: null },
+              [attemptId]: { ...attempt, status: outcome, completedAt: null },
             }),
           ],
         );
@@ -5643,4 +5687,9 @@ interface TenantRouteAccessRow extends QueryRow {
   project_updated_at: Date | null;
   project_archived_at: Date | null;
   project_active_configuration_revision_id: string | null;
+}
+
+/** Pending attempts and attempts with an unknown outcome may already have reached the provider. */
+function occupiesOutputSlot(attempt: AgentExecutionOutputAttempt): boolean {
+  return attempt.status === "pending" || attempt.status === "unknown";
 }

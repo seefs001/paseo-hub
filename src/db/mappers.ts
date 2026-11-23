@@ -201,7 +201,10 @@ function toOutputDeliveryAttempts(
     const completedAt = raw["completedAt"] === null ? null : toDate(raw["completedAt"]);
     if (
       typeof outputType !== "string" ||
-      (status !== "pending" && status !== "succeeded" && status !== "failed") ||
+      (status !== "pending" &&
+        status !== "succeeded" &&
+        status !== "failed" &&
+        status !== "unknown") ||
       startedAt === undefined ||
       leaseExpiresAt === undefined ||
       (raw["completedAt"] !== null && completedAt === undefined)

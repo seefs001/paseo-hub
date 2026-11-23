@@ -5,21 +5,22 @@ import {
   type IntegrationToolHandlers,
 } from "../integration-tools/index.js";
 import type { ErrorObject } from "ajv";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { createMcpHandler, Server } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
   deriveAgentExecutionCompletionToken,
   verifyAgentExecutionCompletionToken,
 } from "../agent-executions/completion-token.js";
+import type { AgentSessionRecord } from "../agent-sessions/index.js";
 import type { AgentExecutionRecord, Database } from "../db/types.js";
 import { registerResponseLifecycle } from "../http/response-lifecycle.js";
 import { reportFailure, withReference } from "../failures/index.js";
 import { compileJsonSchema, formatJsonSchemaErrors } from "../workflows/json-schema.js";
+import { recordRunEvent } from "../workflows/journal.js";
 import {
   executionToolDefinitions,
   finishExecutionToolName,
+  isDeliveryOutcomeUnknown,
   replyOutputTool,
   type MaterializedOutputCapability,
   type OutputExecutorRegistry,
@@ -99,57 +100,8 @@ export function createExecutionCapabilityServer(
       ) {
         return Response.json({ error: "unauthorized" }, { status: 401 });
       }
-      const server = new Server(
-        { name: "paseo-hub-session", version: "1.0.0" },
-        { capabilities: { tools: {} } },
-      );
-      server.setRequestHandler(ListToolsRequestSchema, () => ({
-        tools: session.tools.map((storedTool) => {
-          const tool = advertisedExecutionTool(storedTool);
-          return {
-            ...tool,
-            inputSchema: {
-              ...tool.inputSchema,
-              properties: {
-                ...tool.inputSchema.properties,
-                executionId: {
-                  type: "string",
-                  description: "Execution ID supplied with the request prompt.",
-                },
-              },
-              required: [...(tool.inputSchema.required ?? []), "executionId"],
-            },
-          };
-        }),
-      }));
-      server.setRequestHandler(CallToolRequestSchema, async (call) => {
-        const { executionId, ...args } = call.params.arguments ?? {};
-        if (typeof executionId !== "string" || !z.uuid().safeParse(executionId).success)
-          return toolFailure("A valid executionId is required");
-        const execution = await options.database.findAgentExecutionById(executionId);
-        if (
-          !execution ||
-          execution.agentSessionId !== session.id ||
-          execution.organizationId !== session.organizationId ||
-          execution.projectId !== session.projectId ||
-          (execution.status !== "spawning" && execution.status !== "running")
-        ) {
-          return toolFailure("Execution is not live in this agent session");
-        }
-        const outputs = options.outputs.materialize(
-          execution.launchIntent?.allowOutputs ?? [],
-          execution.outputContext,
-        );
-        return callExecutionTool(
-          options,
-          execution,
-          deriveAgentExecutionCompletionToken(options.completionTokenSecret!, execution.id),
-          outputs,
-          call.params.name,
-          args,
-        );
-      });
-      return serveMcp(request, sessionId, server);
+      const secret = options.completionTokenSecret;
+      return serveMcp(request, sessionId, () => createSessionMcpServer(options, session, secret));
     },
     async handle(request, executionId) {
       const token = readBearerToken(request.headers.get("authorization") ?? undefined);
@@ -179,26 +131,29 @@ export function createExecutionCapabilityServer(
         );
       }
 
-      const server = createMcpServer(options, execution, token!, materializedOutputs);
-      return serveMcp(request, executionId, server);
+      return serveMcp(request, executionId, () =>
+        createExecutionMcpServer(options, execution, token!, materializedOutputs),
+      );
     },
   };
 }
 
-async function serveMcp(request: Request, executionId: string, server: Server): Promise<Response> {
-  const transport = new WebStandardStreamableHTTPServerTransport({
-    // Omitting sessionIdGenerator is the SDK's stateless-mode setting.
-    enableJsonResponse: true,
-    enableDnsRebindingProtection: false,
-  });
+/**
+ * Serves one MCP HTTP exchange. The handler answers both protocol eras from
+ * fresh per-request servers: 2026-07-28 requests carry their protocol version
+ * in a per-request envelope, and 2025-era clients that open with `initialize`
+ * go through the SDK's stateless fallback. Nothing outlives the response.
+ */
+async function serveMcp(
+  request: Request,
+  resourceId: string,
+  createServer: () => Server,
+): Promise<Response> {
+  const handler = createMcpHandler(createServer, { legacy: "stateless" });
   let responseLifecycleRegistered = false;
-  const closeMcp = async (): Promise<void> => {
-    await closeCapabilityResource("mcp_server", executionId, () => server.close());
-    await closeCapabilityResource("mcp_transport", executionId, () => transport.close());
-  };
+  const closeMcp = () => closeCapabilityResource("mcp_handler", resourceId, () => handler.close());
   try {
-    await server.connect(transport);
-    const response = await transport.handleRequest(request);
+    const response = await handler.fetch(request);
     responseLifecycleRegistered = true;
     return registerResponseLifecycle(response, {
       // HTTP finish only proves that Node flushed the MCP response. The
@@ -236,7 +191,65 @@ async function authenticateExecution(
   return execution;
 }
 
-function createMcpServer(
+function createSessionMcpServer(
+  options: ExecutionCapabilityOptions,
+  session: AgentSessionRecord,
+  completionTokenSecret: string,
+): Server {
+  const server = new Server(
+    { name: "paseo-hub-session", version: "1.0.0" },
+    { capabilities: { tools: {} } },
+  );
+  server.setRequestHandler("tools/list", () => ({
+    tools: session.tools.map((storedTool) => {
+      const tool = advertisedExecutionTool(storedTool);
+      return {
+        ...tool,
+        inputSchema: {
+          ...tool.inputSchema,
+          properties: {
+            ...tool.inputSchema.properties,
+            executionId: {
+              type: "string",
+              description: "Execution ID supplied with the request prompt.",
+            },
+          },
+          required: [...(tool.inputSchema.required ?? []), "executionId"],
+        },
+      };
+    }),
+  }));
+  server.setRequestHandler("tools/call", async (call) => {
+    const { executionId, ...args } = call.params.arguments ?? {};
+    if (typeof executionId !== "string" || !z.uuid().safeParse(executionId).success)
+      return toolFailure("A valid executionId is required");
+    const execution = await options.database.findAgentExecutionById(executionId);
+    if (
+      !execution ||
+      execution.agentSessionId !== session.id ||
+      execution.organizationId !== session.organizationId ||
+      execution.projectId !== session.projectId ||
+      (execution.status !== "spawning" && execution.status !== "running")
+    ) {
+      return toolFailure("Execution is not live in this agent session");
+    }
+    const outputs = options.outputs.materialize(
+      execution.launchIntent?.allowOutputs ?? [],
+      execution.outputContext,
+    );
+    return callExecutionTool(
+      options,
+      execution,
+      deriveAgentExecutionCompletionToken(completionTokenSecret, execution.id),
+      outputs,
+      call.params.name,
+      args,
+    );
+  });
+  return server;
+}
+
+function createExecutionMcpServer(
   options: ExecutionCapabilityOptions,
   execution: AgentExecutionRecord,
   token: string,
@@ -251,8 +264,8 @@ function createMcpServer(
     materializedOutputs,
     execution.launchIntent?.tools,
   ).map(advertisedExecutionTool);
-  server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));
-  server.setRequestHandler(CallToolRequestSchema, (request) =>
+  server.setRequestHandler("tools/list", () => ({ tools }));
+  server.setRequestHandler("tools/call", (request) =>
     callExecutionTool(
       options,
       execution,
@@ -337,7 +350,11 @@ async function finishExecutionCall(
   materializedOutputs: readonly MaterializedOutputCapability[],
 ) {
   try {
-    const missingOutputs = missingRequiredOutputs(execution, materializedOutputs);
+    const missingOutputs = missingRequiredOutputs(
+      execution,
+      materializedOutputs,
+      options.now?.() ?? new Date(),
+    );
     if (missingOutputs.length > 0) {
       reportFailure(
         new Error("required execution outputs are missing"),
@@ -351,6 +368,17 @@ async function finishExecutionCall(
       return toolFailure(requiredOutputsGuidance(missingOutputs));
     }
     const output = Object.hasOwn(args, "output") ? args["output"] : undefined;
+    // The agent's claim is journaled before Hub acts on it, so the record shows who said what.
+    await recordRunEvent(
+      options.database,
+      { agentExecutionId: execution.id, kind: "agent_finish_claimed" },
+      (error) =>
+        reportFailure(error, {
+          operation: "execution_capability.journal.finish",
+          component: "execution_capabilities",
+          executionId: execution.id,
+        }),
+    );
     const completed = await options.completeExecution({
       executionId: execution.id,
       token,
@@ -418,6 +446,7 @@ async function executeOutputCall(
     );
     return toolFailure(`Output limit reached for ${output.declaration.type}`);
   }
+  let delivered = false;
   try {
     const url =
       toolName === replyOutputTool.name
@@ -432,16 +461,22 @@ async function executeOutputCall(
       outputContext: execution.outputContext,
       ...(files.files.length === 0 ? {} : { files: files.files }),
     });
+    delivered = true;
     const recorded = await options.database.completeAgentExecutionOutput(
       execution.id,
       attempt.id,
       options.now?.() ?? new Date(),
     );
     if (recorded === undefined) throw new Error("output emission could not be recorded");
+    await journalOutput(options, execution, attempt.id, output, "output_succeeded");
     return toolSuccess("Output sent");
   } catch (error) {
+    // A delivered output whose record was lost is treated like a lost answer: never resend it.
+    const unknown = delivered || isDeliveryOutcomeUnknown(error);
     const failure = reportFailure(error, {
-      operation: "execution_capability.output.deliver",
+      operation: unknown
+        ? "execution_capability.output.outcome_unknown"
+        : "execution_capability.output.deliver",
       component: "execution_capabilities",
       executionId: execution.id,
     });
@@ -450,6 +485,7 @@ async function executeOutputCall(
         execution.id,
         attempt.id,
         options.now?.() ?? new Date(),
+        unknown ? "unknown" : "failed",
       );
     } catch (recordError) {
       reportFailure(recordError, {
@@ -458,13 +494,51 @@ async function executeOutputCall(
         executionId: execution.id,
       });
     }
+    await journalOutput(
+      options,
+      execution,
+      attempt.id,
+      output,
+      unknown ? "output_unknown" : "output_failed",
+      failure.requestId,
+    );
     return toolFailure(
       withReference(
-        `Output delivery failed. Check the provider connection and output configuration before calling \`${toolName}\` again.`,
+        unknown
+          ? `Output delivery outcome is unknown: the provider may already have received it. Do not call \`${toolName}\` again with the same content. Report the uncertainty in your final output instead.`
+          : `Output delivery failed. Check the provider connection and output configuration before calling \`${toolName}\` again.`,
         failure.requestId,
       ),
     );
   }
+}
+
+function journalOutput(
+  options: ExecutionCapabilityOptions,
+  execution: AgentExecutionRecord,
+  attemptId: string,
+  output: MaterializedOutputCapability,
+  kind: "output_succeeded" | "output_failed" | "output_unknown",
+  requestId?: string,
+): Promise<void> {
+  return recordRunEvent(
+    options.database,
+    {
+      agentExecutionId: execution.id,
+      kind,
+      data: {
+        attemptId,
+        outputType: output.declaration.type,
+        ...(requestId === undefined ? {} : { requestId }),
+      },
+    },
+    (error) =>
+      reportFailure(error, {
+        operation: "execution_capability.journal.output",
+        component: "execution_capabilities",
+        executionId: execution.id,
+      }),
+  );
 }
 
 async function readOutputFiles(
@@ -562,17 +636,31 @@ function validationMessage(errors: readonly ErrorObject[] | null | undefined): s
 function missingRequiredOutputs(
   execution: AgentExecutionRecord,
   materializedOutputs: readonly MaterializedOutputCapability[],
+  now: Date,
 ): readonly { type: string; toolName: string }[] {
   const toolsByType = new Map(
     materializedOutputs.map((output) => [output.declaration.type, output.capability.tool.name]),
   );
-  return (execution.launchIntent?.allowOutputs ?? [])
-    .filter((output) => output.required === true)
-    .filter((output) => (execution.outputEmissions[output.type] ?? 0) < 1)
-    .map((output) => ({
-      type: output.type,
-      toolName: toolsByType.get(output.type) ?? "unavailable",
-    }));
+  return (
+    (execution.launchIntent?.allowOutputs ?? [])
+      .filter((output) => output.required === true)
+      .filter((output) => (execution.outputEmissions[output.type] ?? 0) < 1)
+      // An unknown outcome, or a delivery abandoned by a Hub restart, may have reached the provider.
+      // Demanding another call would risk a duplicate.
+      .filter(
+        (output) =>
+          !Object.values(execution.outputDeliveryAttempts).some(
+            (attempt) =>
+              attempt.outputType === output.type &&
+              (attempt.status === "unknown" ||
+                (attempt.status === "pending" && attempt.leaseExpiresAt <= now)),
+          ),
+      )
+      .map((output) => ({
+        type: output.type,
+        toolName: toolsByType.get(output.type) ?? "unavailable",
+      }))
+  );
 }
 
 function requiredOutputsGuidance(

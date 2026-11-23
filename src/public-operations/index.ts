@@ -80,6 +80,17 @@ export function createPublicOperations(
         return storageUnavailableOrThrow(error);
       }
     },
+    async readRunJournal(authorization, input) {
+      try {
+        const journal = await repository.readRunJournal(
+          authorization.organizationId,
+          input.triggerRunId,
+        );
+        return journal === undefined ? { status: "run_not_found" } : { status: "journal", journal };
+      } catch (error) {
+        return storageUnavailableOrThrow(error);
+      }
+    },
     async listProjects(authorization) {
       try {
         return {

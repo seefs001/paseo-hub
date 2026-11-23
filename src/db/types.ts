@@ -151,7 +151,12 @@ export interface AgentExecutionRecord {
   hubActionAcknowledgements: AgentExecutionHubAcknowledgements;
 }
 
-export type AgentExecutionOutputAttemptStatus = "pending" | "succeeded" | "failed";
+/**
+ * `unknown`: the provider call ended without proof of success or failure (lost connection,
+ * timeout, provider 5xx, or a Hub crash mid-delivery). It still occupies an output slot so the
+ * output is never sent twice on a guess.
+ */
+export type AgentExecutionOutputAttemptStatus = "pending" | "succeeded" | "failed" | "unknown";
 
 export interface AgentExecutionOutputAttempt {
   id: string;
@@ -886,6 +891,41 @@ export interface ProjectActivityRunListRecord {
   receipt: ProviderEventReceiptSummary;
 }
 
+/**
+ * Facts Hub observes that no status column keeps. Run and step transitions are already durable
+ * rows; the run journal derives those instead of storing them twice.
+ */
+export const TRIGGER_RUN_EVENT_KINDS = [
+  "step_dispatch_requested",
+  "step_dispatch_recovered",
+  "agent_finish_claimed",
+  "output_succeeded",
+  "output_failed",
+  "output_unknown",
+] as const;
+
+export type TriggerRunEventKind = (typeof TRIGGER_RUN_EVENT_KINDS)[number];
+
+export interface TriggerRunEventInput {
+  /** Resolved from the agent execution's workflow step when omitted. */
+  triggerRunId?: string;
+  agentExecutionId?: string;
+  stepId?: string;
+  kind: TriggerRunEventKind;
+  data?: Readonly<Record<string, JsonValue>>;
+  createdAt?: Date;
+}
+
+export interface TriggerRunEventRecord {
+  id: string;
+  triggerRunId: string;
+  stepId: string | null;
+  agentExecutionId: string | null;
+  kind: TriggerRunEventKind;
+  data: Readonly<Record<string, JsonValue>>;
+  createdAt: Date;
+}
+
 export interface WorkflowStepRunRecord {
   id: string;
   triggerRunId: string;
@@ -1539,6 +1579,9 @@ export interface Database {
     projectId: string,
     id: string,
   ): Promise<AgentExecutionRecord | undefined>;
+  /** Appends a journal event. Returns false when no trigger run can be resolved. */
+  appendTriggerRunEvent(input: TriggerRunEventInput): Promise<boolean>;
+  listTriggerRunEvents(triggerRunId: string): Promise<TriggerRunEventRecord[]>;
   beginAgentExecutionOutput(
     executionId: string,
     outputType: string,
@@ -1554,6 +1597,7 @@ export interface Database {
     executionId: string,
     attemptId: string,
     failedAt: Date,
+    outcome?: "failed" | "unknown",
   ): Promise<boolean>;
   transitionAgentExecution(
     id: string,
