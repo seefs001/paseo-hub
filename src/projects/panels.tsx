@@ -35,6 +35,7 @@ import {
   type ConnectionDisconnectResult,
   type ConnectionStatus,
 } from "../connections/functions.js";
+import { ActivityLink } from "../activity/link.js";
 import { useRouteTenant } from "./context.js";
 import type { ProjectDashboard } from "./dashboard.js";
 import {
@@ -189,6 +190,8 @@ export function OrganizationIntegrationsPanel() {
             <ProviderConnections
               key={provider}
               provider={provider}
+              organizationSlug={scope.organizationSlug}
+              activity={data.providerActivity.find((entry) => entry.provider === provider)}
               connections={connections}
               canManage={data.capabilities.manageResources}
               busy={busy}
@@ -199,12 +202,6 @@ export function OrganizationIntegrationsPanel() {
             />
           ))
         )}
-      </Section>
-      <Section
-        title="Known unrouted events"
-        description="Events received for this organization that were not routed to a workflow"
-      >
-        <ActivityTable activity={data.unroutedEvents} label="Unrouted events" showReason />
       </Section>
     </>
   );
@@ -217,6 +214,8 @@ export function OrganizationIntegrationsPanel() {
  */
 function ProviderConnections({
   provider,
+  organizationSlug,
+  activity,
   connections,
   canManage,
   busy,
@@ -224,6 +223,9 @@ function ProviderConnections({
   onRevoke,
 }: {
   provider: ConnectionProviderName;
+  organizationSlug: string;
+  /** The provider's runs in the last week; absent when none ran. */
+  activity: OrganizationSnapshot["providerActivity"][number] | undefined;
   connections: readonly ConnectionRecord[];
   canManage: boolean;
   busy: boolean;
@@ -236,6 +238,35 @@ function ProviderConnections({
       icon={<ProviderGlyph provider={provider} />}
       title={label}
       {...(action === undefined ? {} : { action })}
+      {...(connections.length === 0
+        ? {}
+        : {
+            footer: {
+              note: providerWeek(activity),
+              actions: (
+                <>
+                  <Button variant="outline" size="sm" asChild>
+                    <ActivityLink
+                      organizationSlug={organizationSlug}
+                      search={{ provider }}
+                      aria-label={`View ${label} runs`}
+                    >
+                      View runs
+                    </ActivityLink>
+                  </Button>
+                  <Button variant="outline" size="sm" asChild>
+                    <ActivityLink
+                      organizationSlug={organizationSlug}
+                      search={{ view: "unmatched", provider }}
+                      aria-label={`${label} unmatched events`}
+                    >
+                      Unmatched events
+                    </ActivityLink>
+                  </Button>
+                </>
+              ),
+            },
+          })}
     >
       {connections.length === 0 ? null : (
         <RecordList label={`${label} connections`}>
@@ -278,6 +309,13 @@ function ProviderConnections({
       )}
     </Card>
   );
+}
+
+/** `84 runs · 3 failed in the last 7 days`: what a connection's events started this week. */
+function providerWeek(activity: { runs: number; failed: number } | undefined): string {
+  const runs = activity?.runs ?? 0;
+  const failed = activity?.failed ?? 0;
+  return `${runs.toLocaleString("en-US")} ${runs === 1 ? "run" : "runs"} · ${failed.toLocaleString("en-US")} failed in the last 7 days`;
 }
 
 export function OrganizationDaemonsPanel() {
@@ -329,7 +367,7 @@ export function ProjectOverviewPanel() {
       <Section
         title="Recent activity"
         action={
-          <Button variant="link" asChild>
+          <Button variant="outline" size="sm" asChild>
             <Link to={`${base}/activity` as never}>View all</Link>
           </Button>
         }
@@ -595,15 +633,10 @@ function ActivityTable({
   activity,
   label,
   detailBasePath,
-  showReason = false,
 }: {
-  activity: ReadonlyArray<
-    | ProjectSnapshot["activity"][number]
-    | Awaited<ReturnType<ProjectDashboard["organizationSnapshot"]>>["unroutedEvents"][number]
-  >;
+  activity: readonly ProjectSnapshot["activity"][number][];
   label: string;
   detailBasePath?: string;
-  showReason?: boolean;
 }) {
   return (
     <DataTable
@@ -613,14 +646,13 @@ function ActivityTable({
         { header: "Provider" },
         { header: "Source" },
         { header: "Status" },
-        ...(showReason ? [{ header: "Reason", fill: true }] : []),
         { header: "Received" },
       ]}
       isEmpty={activity.length === 0}
       empty={{ title: "No activity" }}
     >
       {activity.map((event) => {
-        const status = "status" in event ? event.status : "dropped";
+        const status = event.status;
         return (
           <DataRow key={event.id}>
             <DataCell>
@@ -629,11 +661,9 @@ function ActivityTable({
                   detailBasePath &&
                   "configuredTriggerName" in event &&
                   event.configuredTriggerName !== null ? (
-                    <Button variant="link" asChild>
-                      <Link to={`${detailBasePath}/${event.id}` as never}>
-                        {event.configuredTriggerName}
-                      </Link>
-                    </Button>
+                    <Link to={`${detailBasePath}/${event.id}` as never} className="hover:underline">
+                      {event.configuredTriggerName}
+                    </Link>
                   ) : (
                     <span className="font-mono">{event.id.slice(0, 12)}</span>
                   )
@@ -646,7 +676,6 @@ function ActivityTable({
             <DataCell>
               <StatusPill tone={executionTone(status)}>{statusLabel(status)}</StatusPill>
             </DataCell>
-            {showReason ? <DataCell>{event.failureReason ?? "Unknown reason"}</DataCell> : null}
             <DataCell muted>
               <RelativeTime value={event.receivedAt} />
             </DataCell>

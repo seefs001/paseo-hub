@@ -18,6 +18,7 @@ import type { UsageDashboard } from "../usage/dashboard.js";
 import type { ProviderApplications } from "../provider-applications/index.js";
 import type { DaemonCatalog } from "../daemons/catalog.js";
 import type { DiscordChannelCatalog } from "../triggers/discord/channel-catalog.js";
+import type { ActivityDashboard } from "../activity/index.js";
 import type { HomeDashboard } from "../home/dashboard.js";
 
 /**
@@ -75,6 +76,8 @@ export interface ApplicationRuntime {
   discordChannelCatalog?: DiscordChannelCatalog | null;
   /** The organization landing: checklist facts and a recent-window overview. */
   homeDashboard?: HomeDashboard | null;
+  /** Runs and unmatched events: the organization's activity history. */
+  activityDashboard?: ActivityDashboard | null;
   /** Org-scoped, read-only limits and usage. Present whenever database + browser auth are; no
    * billing dependency, so it renders on self-hosted and hosted alike. */
   usageDashboard: UsageDashboard | null;

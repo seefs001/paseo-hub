@@ -379,6 +379,13 @@
       "when": 1795453203533,
       "tag": "0053_trigger_run_events",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1795536191345,
+      "tag": "0054_dashboard_activity_indexes",
+      "breakpoints": true
     }
   ]
 }
