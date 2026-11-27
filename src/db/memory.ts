@@ -78,6 +78,7 @@ import type {
   ProjectTriggerRoute,
   MigrateProjectTriggersInput,
   OrganizationTriggerRecord,
+  SavedOrganizationTrigger,
   OrganizationTriggerRevisionRecord,
   PendingProjectTriggerMigration,
   SaveOrganizationTriggerInput,
@@ -89,6 +90,7 @@ import type {
   TriggerRunRecord,
   WorkflowStepExecutionInput,
   WorkflowStepRunRecord,
+  WorkflowWakeupDaemonDeferral,
   WorkflowWakeupRecord,
   WorkflowAgentCompletionInput,
   WorkflowDeadlineKind,
@@ -345,6 +347,9 @@ class MemoryDatabase implements Database {
       terminalNotificationPendingAt: null,
       terminalNotificationDeliveredAt: null,
       terminalNotificationLeaseExpiresAt: null,
+      terminalNotificationAttempts: 0,
+      terminalNotificationNextAttemptAt: null,
+      terminalNotificationAbandonedAt: null,
       createdAt: now,
       completedAt: null,
     };
@@ -376,6 +381,7 @@ class MemoryDatabase implements Database {
       availableAt: now,
       leaseExpiresAt: null,
       leasedBeforeClaim: false,
+      waitingForDaemonId: null,
     });
     return { run, created: true };
   }
@@ -501,25 +507,42 @@ class MemoryDatabase implements Database {
     );
   }
 
-  async releaseWorkflowWakeup(triggerRunId: string, now: Date, claimedLease: Date) {
+  async deferWorkflowWakeupForDaemon(
+    triggerRunId: string,
+    claimedLease: Date,
+    deferral: WorkflowWakeupDaemonDeferral,
+  ) {
     const wakeup = this.workflowWakeups.get(triggerRunId);
-    if (wakeup?.leaseExpiresAt?.getTime() === claimedLease.getTime()) wakeup.leaseExpiresAt = now;
+    if (wakeup?.leaseExpiresAt?.getTime() !== claimedLease.getTime()) return;
+    this.workflowWakeups.set(triggerRunId, {
+      ...wakeup,
+      leaseExpiresAt: deferral.releasedAt,
+      availableAt: deferral.retryAt,
+      waitingForDaemonId: deferral.daemonId,
+    });
   }
 
-  async claimWorkflowWakeup(now: Date, leaseMs: number, excludedRunIds: readonly string[] = []) {
+  async claimWorkflowWakeup(
+    now: Date,
+    leaseMs: number,
+    dispatchableDaemonIds: readonly string[] = [],
+  ) {
     const candidate = Array.from(this.workflowWakeups.values())
       .filter(
         (wakeup) =>
-          !excludedRunIds.includes(wakeup.triggerRunId) &&
-          wakeup.availableAt <= now &&
+          (wakeup.availableAt <= now ||
+            (wakeup.waitingForDaemonId !== null &&
+              dispatchableDaemonIds.includes(wakeup.waitingForDaemonId))) &&
           (wakeup.leaseExpiresAt === null || wakeup.leaseExpiresAt <= now),
       )
       .sort((left, right) => left.availableAt.getTime() - right.availableAt.getTime())[0];
     if (candidate === undefined) return undefined;
     const claimed = {
       ...candidate,
+      availableAt: candidate.availableAt <= now ? candidate.availableAt : now,
       leaseExpiresAt: new Date(now.getTime() + leaseMs),
       leasedBeforeClaim: candidate.leaseExpiresAt !== null,
+      waitingForDaemonId: null,
     };
     this.workflowWakeups.set(candidate.triggerRunId, claimed);
     return claimed;
@@ -535,6 +558,7 @@ class MemoryDatabase implements Database {
           : current.availableAt,
       leaseExpiresAt: null,
       leasedBeforeClaim: false,
+      waitingForDaemonId: null,
     });
   }
 
@@ -767,6 +791,7 @@ class MemoryDatabase implements Database {
           availableAt: now,
           leaseExpiresAt: null,
           leasedBeforeClaim: false,
+          waitingForDaemonId: null,
         });
       }
       return;
@@ -974,6 +999,7 @@ class MemoryDatabase implements Database {
       availableAt: now,
       leaseExpiresAt: null,
       leasedBeforeClaim: false,
+      waitingForDaemonId: null,
     });
     return { stepRun: updatedStep, run };
   }
@@ -1051,6 +1077,7 @@ class MemoryDatabase implements Database {
           availableAt: now,
           leaseExpiresAt: null,
           leasedBeforeClaim: false,
+          waitingForDaemonId: null,
         });
       }
     }
@@ -1064,8 +1091,11 @@ class MemoryDatabase implements Database {
           run.status !== "running" &&
           run.terminalNotificationPendingAt !== null &&
           run.terminalNotificationDeliveredAt === null &&
+          run.terminalNotificationAbandonedAt === null &&
           (run.terminalNotificationLeaseExpiresAt === null ||
-            run.terminalNotificationLeaseExpiresAt <= now),
+            run.terminalNotificationLeaseExpiresAt <= now) &&
+          (run.terminalNotificationNextAttemptAt === null ||
+            run.terminalNotificationNextAttemptAt <= now),
       )
       .sort((left, right) => {
         const time =
@@ -1077,9 +1107,47 @@ class MemoryDatabase implements Database {
     const updated = {
       ...candidate,
       terminalNotificationLeaseExpiresAt: new Date(now.getTime() + leaseMs),
+      terminalNotificationAttempts: candidate.terminalNotificationAttempts + 1,
     };
     this.triggerRuns.set(updated.id, updated);
     return updated;
+  }
+
+  async retryWorkflowRunTerminalNotification(triggerRunId: string, nextAttemptAt: Date) {
+    const run = this.undeliveredTerminalNotification(triggerRunId);
+    if (run === undefined) return;
+    this.triggerRuns.set(run.id, {
+      ...run,
+      terminalNotificationLeaseExpiresAt: null,
+      terminalNotificationNextAttemptAt: nextAttemptAt,
+    });
+  }
+
+  async abandonWorkflowRunTerminalNotification(triggerRunId: string, abandonedAt: Date) {
+    const run = this.undeliveredTerminalNotification(triggerRunId);
+    if (run === undefined) return;
+    this.triggerRuns.set(run.id, {
+      ...run,
+      terminalNotificationLeaseExpiresAt: null,
+      terminalNotificationNextAttemptAt: null,
+      terminalNotificationAbandonedAt: abandonedAt,
+    });
+  }
+
+  private undeliveredTerminalNotification(
+    triggerRunId: string,
+  ): AcceptedTriggerRunRecord | undefined {
+    const run = this.triggerRuns.get(triggerRunId);
+    if (
+      run === undefined ||
+      run.outcome !== "accepted" ||
+      run.terminalNotificationPendingAt === null ||
+      run.terminalNotificationDeliveredAt !== null ||
+      run.terminalNotificationAbandonedAt !== null
+    ) {
+      return undefined;
+    }
+    return run;
   }
 
   async markWorkflowRunTerminalNotificationDelivered(
@@ -2700,7 +2768,7 @@ class MemoryDatabase implements Database {
 
   async saveOrganizationTrigger(
     input: SaveOrganizationTriggerInput,
-  ): Promise<OrganizationTriggerRecord> {
+  ): Promise<SavedOrganizationTrigger> {
     const existing =
       input.triggerId === undefined ? undefined : this.organizationTriggers.get(input.triggerId);
     if (existing !== undefined && existing.organizationId !== input.organizationId) {
@@ -2783,7 +2851,7 @@ class MemoryDatabase implements Database {
           input.name,
       })),
     );
-    return trigger;
+    return { trigger };
   }
 
   private createTriggerRuntimeProject(input: {

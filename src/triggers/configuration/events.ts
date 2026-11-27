@@ -70,7 +70,12 @@ function authored(label: string): EventDefinition {
   return event("github", label, { audiences: ASSOCIATION });
 }
 
+// The order is the event picker's. The events Hub sends itself come first because they work
+// before any integration is connected.
 const EVENTS = {
+  "webhook.received": event("webhook", "Webhook received"),
+  "schedule.tick": event("schedule", "Schedule"),
+  "manual.run": event("manual", "Manual run"),
   "slack.mention": event("slack", "Slack mention"),
   "discord.mention": event("discord", "Discord mention"),
   "discord.reaction_added": event("discord", "Discord reaction added"),
@@ -107,9 +112,6 @@ const EVENTS = {
   "linear.issue_entered_scope": event("linear", "Linear issue entered scope"),
   "linear.issue_assigned": event("linear", "Linear issue assigned"),
   "linear.comment_created": event("linear", "Linear comment created"),
-  "schedule.tick": event("schedule", "Schedule"),
-  "webhook.received": event("webhook", "Webhook received"),
-  "manual.run": event("manual", "Manual run"),
 };
 
 export type EditorEvent = keyof typeof EVENTS;
